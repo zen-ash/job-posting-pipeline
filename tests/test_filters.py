@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from job_ingest.filters import Filters, load_filters, matches, matches_location, matches_title
 
 REPO_ROOT = Path(__file__).parent.parent
+REAL_FILTERS = load_filters(REPO_ROOT / "filters.yml")
 
 FILTERS = Filters(
     title_include_keywords=(
@@ -146,16 +149,15 @@ def test_exclude_beats_include_when_both_match():
 def test_exclude_beats_include_against_the_real_filters_yml():
     # Regression test against the actual project config, not a synthetic
     # Filters object -- if filters.yml ever loses this exclude, this fails.
-    real_filters = load_filters(REPO_ROOT / "filters.yml")
 
     # Same include signals ("associate", "risk"), no exclude keyword present --
     # proves the include side genuinely matches, so the next assertion isn't
     # vacuously true.
-    assert matches_title("Associate, Risk Management", real_filters) is True
+    assert matches_title("Associate, Risk Management", REAL_FILTERS) is True
 
     # Adding "Director" must flip this to excluded even though the title still
     # matches "associate" and "risk" in title_include_keywords.
-    assert matches_title("Associate Director, Risk Management", real_filters) is False
+    assert matches_title("Associate Director, Risk Management", REAL_FILTERS) is False
 
 
 def test_legal_roles_excluded_despite_broad_compliance_and_risk_includes():
@@ -163,9 +165,158 @@ def test_legal_roles_excluded_despite_broad_compliance_and_risk_includes():
     # will fire on legal-adjacent titles that aren't actually data/analyst
     # roles -- counsel/attorney/paralegal excludes exist specifically to catch
     # those.
-    real_filters = load_filters(REPO_ROOT / "filters.yml")
+    assert matches_title("Compliance Counsel", REAL_FILTERS) is False
+    assert matches_title("Attorney, Regulatory Compliance", REAL_FILTERS) is False
+    assert matches_title("Paralegal, Risk & Compliance", REAL_FILTERS) is False
+    assert matches_title("Vice President, Compliance", REAL_FILTERS) is False
 
-    assert matches_title("Compliance Counsel", real_filters) is False
-    assert matches_title("Attorney, Regulatory Compliance", real_filters) is False
-    assert matches_title("Paralegal, Risk & Compliance", real_filters) is False
-    assert matches_title("Vice President, Compliance", real_filters) is False
+
+# --- dead-entry fix: keywords ending in punctuation ------------------------
+#
+# \b requires an actual word-char/non-word-char transition. A keyword ending
+# in punctuation (a period, a closing paren) has no such transition left when
+# the next real character is also non-word (a comma, a space, end of string)
+# -- so the trailing \b silently never matches. Confirmed empirically against
+# this project's real data before the fix: "u.s." and "remote (us)" were both
+# completely dead in location_include_keywords, and would have been for any
+# punctuation-ending entry in title_exclude_keywords too (e.g. "sr.").
+
+
+def test_location_dead_entry_fix_trailing_period():
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=(),
+        location_include_keywords=("u.s.",),
+    )
+    # Under plain \b...\b this never matched -- the period is non-word, and
+    # end-of-string/comma/space after it is also non-word, so \b at that
+    # position never fires.
+    assert matches_location("Remote, u.s.", filters) is True
+    assert matches_location("u.s.", filters) is True
+
+
+def test_location_dead_entry_fix_trailing_parenthesis():
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=(),
+        location_include_keywords=("remote (us)",),
+    )
+    assert matches_location("Remote (US)", filters) is True
+
+
+def test_location_remote_us_parenthetical_matches_against_real_filters_yml():
+    # The exact real posting (PostHog) that was silently missed before the fix.
+    assert matches_location("Remote (US)", REAL_FILTERS) is True
+
+
+def test_title_exclude_dead_entry_fix_trailing_period():
+    filters = Filters(
+        title_include_keywords=("analyst",),
+        title_exclude_keywords=("sr.",),
+        location_include_keywords=(),
+    )
+    assert matches_title("Sr. Data Analyst", filters) is False
+
+
+def test_title_exclude_sr_dot_against_real_filters_yml():
+    assert matches_title("Sr. Data Analyst", REAL_FILTERS) is False
+    # "senior" spelled out is still caught too -- both forms covered.
+    assert matches_title("Senior Data Analyst", REAL_FILTERS) is False
+
+
+# --- state code strictness: comma-anchored, case-sensitive -----------------
+
+
+def test_state_code_matches_only_with_comma_and_uppercase():
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=(),
+        location_include_keywords=(),
+        location_include_state_codes=("IL",),
+    )
+    assert matches_location("Chicago, IL", filters) is True
+    assert matches_location("Chicago, il", filters) is False  # lowercase rejected
+    assert matches_location("IL Remote", filters) is False  # no comma, rejected
+    assert matches_location("Chicago,IL", filters) is True  # no space is fine
+
+
+def test_state_code_does_not_false_positive_on_common_words():
+    # The exact collision risk cited as the reason for comma-anchoring: "in"
+    # and "or" are common English words that a bare word-boundary match on
+    # the state code alone could catch.
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=(),
+        location_include_keywords=(),
+        location_include_state_codes=("IN", "OR"),
+    )
+    assert matches_location("Remote, based in Denver", filters) is False
+    assert matches_location("Remote, US or Canada", filters) is False
+
+
+def test_state_codes_still_match_real_city_state_postings():
+    assert matches_location("Romeoville, IL", REAL_FILTERS) is True
+    assert matches_location("Boynton Beach, FL", REAL_FILTERS) is True
+    assert matches_location("New York, NY", REAL_FILTERS) is True
+
+
+def test_bare_us_covers_state_code_without_comma_against_real_filters_yml():
+    # Real data: state code present but NOT comma-anchored, so it doesn't
+    # match via location_include_state_codes -- covered instead by the plain
+    # "us" entry in location_include_keywords.
+    assert matches_location("US IL - Remote", REAL_FILTERS) is True
+    assert matches_location("US WA Seattle - Remote", REAL_FILTERS) is True
+
+
+def test_spelled_out_state_name_matches_without_a_state_code():
+    # Recall added back specifically to offset requiring state codes to be
+    # comma-anchored + uppercase.
+    assert matches_location("Austin, Texas", REAL_FILTERS) is True
+    assert matches_location("Remote, Georgia", REAL_FILTERS) is True
+
+
+# --- roman numeral seniority suffixes ---------------------------------------
+
+
+def test_analyst_ii_is_not_excluded():
+    # "ii" is deliberately not in title_exclude_keywords -- entry-level-
+    # adjacent at the employers this is targeting.
+    assert matches_title("Data Analyst II", REAL_FILTERS) is True
+
+
+def test_analyst_iii_and_iv_are_excluded():
+    assert matches_title("Data Analyst III", REAL_FILTERS) is False
+    assert matches_title("Data Analyst IV", REAL_FILTERS) is False
+
+
+# --- non-US locations stay excluded after the fix ---------------------------
+#
+# 11 real, distinct, single-country location strings from this project's own
+# data (see the DB query used to build this list), covering Europe, Asia, the
+# Middle East, and the Americas outside the US. None of these should ever
+# start matching as a side effect of loosening the boundary regex or widening
+# the include lists -- that's the whole risk this fix could introduce.
+
+NON_US_LOCATIONS = [
+    "Remote, Canada",
+    "Remote, Mexico",
+    "Remote, United Kingdom",
+    "Remote Ireland",
+    "Remote, Germany",
+    "Remote, France",
+    "Remote, Poland",
+    "Remote, India",
+    "Remote, Japan",
+    "Remote, Singapore",
+    "Remote, Australia",
+]
+
+
+@pytest.mark.parametrize("location", NON_US_LOCATIONS)
+def test_non_us_location_stays_excluded(location):
+    assert matches_location(location, REAL_FILTERS) is False
+
+
+def test_non_us_locations_list_has_eleven_distinct_entries():
+    # Guards the list above itself against accidental duplication/shrinkage.
+    assert len(NON_US_LOCATIONS) == len(set(NON_US_LOCATIONS)) == 11

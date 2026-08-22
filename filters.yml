@@ -9,9 +9,10 @@
 #   2. title contains NONE of title_exclude_keywords
 #   3. location contains at least one of location_include_keywords
 #
-# All matching is case-insensitive and whole-word/phrase (via \b...\b), so
-# "sql" won't match "MySQL" and "us" won't match inside "Russia" — see
-# job_ingest/filters.py.
+# All matching is case-insensitive and whole-word/phrase, so "sql" won't match
+# "MySQL" and "us" won't match inside "Russia" — see job_ingest/filters.py.
+# (US state codes below are the one exception: matched case-SENSITIVE and only
+# immediately after a comma — see location_include_state_codes.)
 
 title_include_keywords:
   # generic — 'analyst' alone catches most target titles
@@ -72,6 +73,7 @@ title_include_keywords:
 
 title_exclude_keywords:
   - senior
+  - sr.
   - staff
   - principal
   - lead
@@ -90,14 +92,19 @@ title_exclude_keywords:
   - attorney
   - paralegal
 
-# Location must contain at least one of these. ATS location fields are messy
+  # seniority-tier suffixes. "ii" is deliberately NOT here -- "Analyst II" is
+  # entry-level-adjacent at the employers this is targeting. iii/iv read as
+  # senior tracks and should still be excluded.
+  - iii
+  - iv
+
+# Location must contain at least one of location_include_keywords OR
+# location_include_state_codes (below). ATS location fields are messy
 # multi-value strings (e.g. "Remote, Canada; Remote, United States", or plain
-# "Romeoville, IL" with no country at all) so this list mixes country-level
-# phrases with the full battery of 2-letter US state codes to catch both
-# styles. Matched permissively on purpose — every posting that passes the
-# title filter but fails this one gets printed by the digest step (grouped by
-# its raw location string) specifically so this list can be tuned against
-# what's actually being missed.
+# "Romeoville, IL" with no country at all). Matched permissively on purpose —
+# every posting that passes the title filter but fails this one gets printed
+# by the digest step (grouped by its raw location string) specifically so
+# these lists can be tuned against what's actually being missed.
 #
 # Deliberately does NOT include a bare "remote" with no country/state — that's
 # genuinely ambiguous (could be remote-anywhere) and should default to
@@ -106,10 +113,82 @@ location_include_keywords:
   - united states
   - usa
   - u.s.
+  # bare "US" (case-insensitive, whole word) -- covers formats where the
+  # country marker isn't part of one of the fixed phrases below, e.g. real
+  # data: "US IL - Remote", "US WA Seattle - Remote". State codes get their
+  # own stricter matching (location_include_state_codes) precisely because a
+  # bare 2-letter code has collision risk that bare "us" doesn't in practice.
+  - us
   - remote, us
   - remote (us)
   - remote - us
   - north america # broad: also covers Canada/Mexico, permissive by design
+
+  # Spelled-out state names, added specifically to offset the recall lost by
+  # requiring state codes below to be comma-anchored + uppercase (a location
+  # written as "Austin, Texas" instead of "Austin, TX" would otherwise miss).
+  # Matched the same permissive, case-insensitive way as the phrases above.
+  - alabama
+  - alaska
+  - arizona
+  - arkansas
+  - california
+  - colorado
+  - connecticut
+  - delaware
+  - florida
+  - georgia # ambiguous with the country Georgia -- permissive by design, same tradeoff as "north america" above
+  - hawaii
+  - idaho
+  - illinois
+  - indiana
+  - iowa
+  - kansas
+  - kentucky
+  - louisiana
+  - maine
+  - maryland
+  - massachusetts
+  - michigan
+  - minnesota
+  - mississippi
+  - missouri
+  - montana
+  - nebraska
+  - nevada
+  - new hampshire
+  - new jersey
+  - new mexico
+  - new york
+  - north carolina
+  - north dakota
+  - ohio
+  - oklahoma
+  - oregon
+  - pennsylvania
+  - rhode island
+  - south carolina
+  - south dakota
+  - tennessee
+  - texas
+  - utah
+  - vermont
+  - virginia
+  - washington # ambiguous with Washington, DC -- harmless, DC is also US
+  - west virginia
+  - wisconsin
+  - wyoming
+  - district of columbia
+
+# US state 2-letter codes. Matched ONLY as ", XX" -- a comma, optional
+# whitespace, then the code exactly as written here (case-SENSITIVE) -- e.g.
+# "Romeoville, IL" matches, but neither a lowercase "il" nor a bare standalone
+# "IL"/"in"/"or" elsewhere in a string does. This is deliberately stricter
+# than location_include_keywords above: a case-insensitive bare-word match on
+# a 2-letter code risks colliding with common English words a permissive
+# location field could plausibly contain ("in", "or", "hi", "me", "de", ...).
+# See job_ingest/filters.py:_contains_state_code.
+location_include_state_codes:
   - AL
   - AK
   - AZ
