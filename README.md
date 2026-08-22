@@ -1,4 +1,4 @@
-# job-ingest
+# job-posting-pipeline
 
 [![Daily job ingest](https://github.com/zen-ash/job-posting-pipeline/actions/workflows/ingest.yml/badge.svg)](https://github.com/zen-ash/job-posting-pipeline/actions/workflows/ingest.yml)
 [![Tests](https://github.com/zen-ash/job-posting-pipeline/actions/workflows/tests.yml/badge.svg)](https://github.com/zen-ash/job-posting-pipeline/actions/workflows/tests.yml)
@@ -7,21 +7,11 @@ A daily ingestion pipeline for public ATS job-board postings (Greenhouse, Lever,
 It polls a hand-maintained list of companies, stores every posting revision in Postgres,
 filters for roles actually worth seeing, and emails a digest of what's genuinely new.
 
-Built as a personal job-search tool and a portfolio project — CS senior at Georgia State,
-targeting entry-level data engineering / data analyst roles.
+Built as a personal job-search tool and a portfolio project.
 
 **Status:** live. Runs daily via GitHub Actions against a Neon Postgres database; the
 first production run ingested 424 postings across 5 companies in 35 seconds and correctly
 emailed a digest of the 2 that matched the filters.
-
-## Build plan
-
-- [x] 1. Repo skeleton, venv, requirements, `.gitignore`, `.env.example`
-- [x] 2. ATS fetchers + normalization to a `Posting` dataclass (fixture-tested, no DB)
-- [x] 3. Postgres schema + upsert logic + new/closed detection
-- [x] 4. Digest email
-- [x] 5. GitHub Actions daily cron
-- [x] 6. This README
 
 ## How it works
 
@@ -120,8 +110,8 @@ Full DDL, with the reasoning for each non-obvious column inline as SQL comments:
 
 ## Filtering
 
-The digest doesn't email every new posting — `filters.yml` (project root, not committed
-logic) narrows it to roles worth seeing:
+The digest doesn't email every new posting — `filters.yml`, a plain config file at the
+project root (not something baked into the code), narrows it to roles worth seeing:
 
 ```yaml
 title_include_keywords: [data analyst, analytics, business intelligence, ...]
