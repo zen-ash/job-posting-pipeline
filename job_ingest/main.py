@@ -1,31 +1,45 @@
-"""Step 2 proof-of-life: fetch and normalize one company's board and print the
-result. No database involved yet — that lands in step 3, where this becomes the
-entrypoint for a full run across every company in companies.yml.
+"""Entrypoint.
+
+  python -m job_ingest.main --company <slug>   -- fetch+print one company, no DB
+                                                   (step 2 debug mode)
+  python -m job_ingest.main                    -- full run: every company in
+                                                   companies.yml, written to Postgres
+                                                   (this is what the daily cron runs)
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import time
+from datetime import UTC, datetime
 
+import requests
+from dotenv import load_dotenv
+
+from job_ingest import db
 from job_ingest.ats import FETCHERS
 from job_ingest.config import Company, load_companies
+from job_ingest.http import BETWEEN_BOARDS_DELAY_SECONDS
+from job_ingest.models import Posting
 
 
-def fetch_company(company: Company) -> list:
+def fetch_company(company: Company) -> list[Posting]:
     fetcher = FETCHERS[company.ats]
     raw = fetcher.fetch(company.board_token)
     return fetcher.normalize(raw, company)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Fetch and print postings for one company from companies.yml. No DB writes."
-    )
-    parser.add_argument("--company", required=True, help="a `slug` from companies.yml")
-    parser.add_argument("--companies-file", default="companies.yml")
-    args = parser.parse_args(argv)
+def compute_run_status(companies_total: int, companies_failed: int) -> str:
+    if companies_total == 0 or companies_failed == 0:
+        return "success"
+    if companies_failed >= companies_total:
+        return "failure"
+    return "partial_failure"
 
+
+def run_single_company(args: argparse.Namespace) -> int:
+    """Step 2 debug mode: fetch + print, no DB."""
     companies = {c.slug: c for c in load_companies(args.companies_file)}
     if args.company not in companies:
         print(
@@ -47,6 +61,116 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n  ... and {len(postings) - 10} more")
 
     return 0
+
+
+def run_full_ingest(args: argparse.Namespace) -> int:
+    """Full run: every company in companies.yml, upserted into Postgres."""
+    companies = load_companies(args.companies_file)
+    started_at = datetime.now(UTC)
+
+    conn = db.get_connection()
+    try:
+        db.ensure_schema(conn)
+        db.sync_companies(conn, companies)
+
+        companies_succeeded = 0
+        board_errors: list[dict] = []
+        totals = {"seen": 0, "new": 0, "updated": 0, "reopened": 0, "closed": 0}
+
+        for i, company in enumerate(companies):
+            print(f"[{company.slug}] fetching ({company.ats})...")
+            try:
+                postings = fetch_company(company)
+            except requests.RequestException as exc:
+                message = str(exc)
+                print(f"[{company.slug}] FAILED: {message}", file=sys.stderr)
+                board_errors.append(
+                    {"company_slug": company.slug, "ats": company.ats, "error": message}
+                )
+            else:
+                stats = db.sync_company_postings(conn, company, postings)
+                conn.commit()
+                companies_succeeded += 1
+                for key in totals:
+                    totals[key] += getattr(stats, key)
+                print(
+                    f"[{company.slug}] seen={stats.seen} new={stats.new} "
+                    f"updated={stats.updated} reopened={stats.reopened} closed={stats.closed}"
+                )
+
+            if i < len(companies) - 1:
+                time.sleep(BETWEEN_BOARDS_DELAY_SECONDS)
+
+        companies_failed = len(board_errors)
+        status = compute_run_status(len(companies), companies_failed)
+        finished_at = datetime.now(UTC)
+
+        run_id = db.record_run(
+            conn,
+            started_at=started_at,
+            finished_at=finished_at,
+            status=status,
+            companies_total=len(companies),
+            companies_succeeded=companies_succeeded,
+            companies_failed=companies_failed,
+            jobs_seen=totals["seen"],
+            jobs_new=totals["new"],
+            jobs_updated=totals["updated"],
+            jobs_reopened=totals["reopened"],
+            jobs_closed=totals["closed"],
+            error=None,
+            board_errors=board_errors,
+        )
+
+        print(
+            f"\nrun #{run_id} [{status}]: {companies_succeeded}/{len(companies)} boards ok, "
+            f"jobs seen={totals['seen']} new={totals['new']} updated={totals['updated']} "
+            f"reopened={totals['reopened']} closed={totals['closed']}"
+        )
+        if board_errors:
+            print("board failures:", file=sys.stderr)
+            for be in board_errors:
+                print(f"  {be['company_slug']} ({be['ats']}): {be['error']}", file=sys.stderr)
+
+        return 0 if status != "failure" else 1
+
+    except Exception as exc:  # noqa: BLE001 - top-level: record the crash, then re-raise
+        finished_at = datetime.now(UTC)
+        try:
+            db.record_run(
+                conn,
+                started_at=started_at,
+                finished_at=finished_at,
+                status="failure",
+                companies_total=0,
+                companies_succeeded=0,
+                companies_failed=0,
+                jobs_seen=0,
+                jobs_new=0,
+                jobs_updated=0,
+                jobs_reopened=0,
+                jobs_closed=0,
+                error=str(exc),
+                board_errors=[],
+            )
+        except Exception:
+            pass  # DB itself may be what's broken; don't mask the original error
+        raise
+    finally:
+        conn.close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--company", help="fetch+print only this slug from companies.yml, no DB")
+    parser.add_argument("--companies-file", default="companies.yml")
+    args = parser.parse_args(argv)
+
+    if args.company:
+        return run_single_company(args)
+    return run_full_ingest(args)
 
 
 if __name__ == "__main__":
