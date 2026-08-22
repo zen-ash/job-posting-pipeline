@@ -1,0 +1,42 @@
+[
+  {
+    "descriptionPlain": "Ro is a direct-to-patient healthcare company with a mission of helping patients achieve their health goals by delivering the easiest, most effective care possible. Ro is the only company to offer nationwide telehealth, labs, and pharmacy services. This is enabled by Ro's vertically integrated platform that helps patients achieve their goals through a convenient, end-to-end healthcare experience sp \u2026[trimmed for fixture]",
+    "hostedUrl": "https://jobs.lever.co/ro/f25a6c49-5ed4-4aa0-a5bb-b30e9790f90c",
+    "id": "f25a6c49-5ed4-4aa0-a5bb-b30e9790f90c",
+    "categories": {
+      "commitment": "Full-time",
+      "location": "Romeoville, IL",
+      "team": "Pharmacy",
+      "allLocations": [
+        "Romeoville, IL"
+      ]
+    },
+    "text": "Compounding Pharmacy Technician -  Romeoville, IL",
+    "createdAt": 1750119882479
+  },
+  {
+    "descriptionPlain": "Ro is a direct-to-patient healthcare company with a mission of helping patients achieve their health goals by delivering the easiest, most effective care possible. Ro is the only company to offer nationwide telehealth, labs, and pharmacy services. This is enabled by Ro's vertically integrated platform that helps patients achieve their goals through a convenient, end-to-end healthcare experience sp \u2026[trimmed for fixture]",
+    "hostedUrl": "https://jobs.lever.co/ro/4b815c8f-f429-4430-98e1-4b91164627c7",
+    "id": "4b815c8f-f429-4430-98e1-4b91164627c7",
+    "categories": {
+      "commitment": "Full-time",
+      "location": "Boynton Beach, FL",
+      "team": "Pharmacy",
+      "allLocations": [
+        "Boynton Beach, FL"
+      ]
+    },
+    "text": "Compounding Pharmacy Technician - Boynton Beach, FL",
+    "createdAt": 1753206268750
+  },
+  {
+    "descriptionPlain": "Minimal fields to exercise the normalizer's defensive paths.",
+    "hostedUrl": "https://jobs.lever.co/ro/fixture-edge-case-0001",
+    "id": "fixture-edge-case-0001",
+    "categories": {
+      "location": "Remote - US"
+    },
+    "text": "Fixture-Only Edge Case: No Team, No CreatedAt",
+    "createdAt": null
+  }
+]

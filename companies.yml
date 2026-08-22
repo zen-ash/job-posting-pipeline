@@ -1,0 +1,40 @@
+# Target companies to poll, edited by hand.
+#
+# - slug:         our internal identifier. Used as part of the DB primary key
+#                  alongside `source` + the ATS's external job id, so once a company
+#                  is added, don't rename its slug — that would orphan its history.
+# - name:         display name, used in the digest email.
+# - ats:          one of: greenhouse | lever | ashby
+# - board_token:  the exact token/slug the ATS's public API expects in its URL.
+#                  Greenhouse:  https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs
+#                  Lever:       https://api.lever.co/v0/postings/{board_token}
+#                  Ashby:       https://api.ashbyhq.com/posting-api/job-board/{board_token}
+#
+# These 5 are real, verified-working boards (checked against the live APIs while
+# building this pipeline) spanning all three ATSs, so you can confirm everything
+# works before swapping in your own target list.
+companies:
+  - slug: gitlab
+    name: GitLab
+    ats: greenhouse
+    board_token: gitlab
+
+  - slug: asana
+    name: Asana
+    ats: greenhouse
+    board_token: asana
+
+  - slug: ro
+    name: Ro
+    ats: lever
+    board_token: ro
+
+  - slug: linear
+    name: Linear
+    ats: ashby
+    board_token: linear
+
+  - slug: posthog
+    name: PostHog
+    ats: ashby
+    board_token: posthog

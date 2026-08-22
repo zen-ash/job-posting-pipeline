@@ -1,0 +1,56 @@
+{
+  "jobs": [
+    {
+      "id": "d3bc1ced-3ce4-4086-a050-555055dbb1ff",
+      "title": "Senior / Staff Fullstack Engineer",
+      "department": "Product",
+      "team": "Engineering",
+      "employmentType": "FullTime",
+      "location": "Europe",
+      "shouldDisplayCompensationOnJobPostings": false,
+      "publishedAt": "2021-04-27T20:13:45.158+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": {
+        "postalAddress": {
+          "addressCountry": "European Union"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff",
+      "applyUrl": "https://jobs.ashbyhq.com/linear/d3bc1ced-3ce4-4086-a050-555055dbb1ff/application",
+      "descriptionPlain": "At Linear, we're building the product development system for teams and agents. AI is fundamentally changing how software gets built, and we\u2019re shaping the tools this new era requires. \n\nFounded in 2019, Linear has become the platform of choice for more than 40,000 companies (including OpenAI, Coinbase, and Ramp) to plan, build, and ship their products. Today, our team is distributed across North A \u2026[trimmed for fixture]"
+    },
+    {
+      "id": "cd5ae036-0223-427a-b038-ba16ef9dcb32",
+      "title": "Senior / Staff Fullstack Engineer",
+      "department": "Product",
+      "team": "Engineering",
+      "employmentType": "FullTime",
+      "location": "North America",
+      "shouldDisplayCompensationOnJobPostings": false,
+      "publishedAt": "2021-08-18T20:48:26.891+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "address": {
+        "postalAddress": {
+          "addressCountry": "United States"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/linear/cd5ae036-0223-427a-b038-ba16ef9dcb32",
+      "applyUrl": "https://jobs.ashbyhq.com/linear/cd5ae036-0223-427a-b038-ba16ef9dcb32/application",
+      "descriptionPlain": "At Linear, we're building the product development system for teams and agents. AI is fundamentally changing how software gets built, and we\u2019re shaping the tools this new era requires. \n\nFounded in 2019, Linear has become the platform of choice for more than 40,000 companies (including OpenAI, Coinbase, and Ramp) to plan, build, and ship their products. Today, our team is distributed across North A \u2026[trimmed for fixture]"
+    },
+    {
+      "id": "fixture-edge-case-0001",
+      "title": "Fixture-Only Edge Case: No Location, No PublishedAt",
+      "department": null,
+      "team": null,
+      "jobUrl": "https://jobs.ashbyhq.com/linear/fixture-edge-case-0001",
+      "publishedAt": null,
+      "descriptionPlain": "Minimal fields to exercise the normalizer's defensive paths."
+    }
+  ],
+  "apiVersion": "1"
+}
