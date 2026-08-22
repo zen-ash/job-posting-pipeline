@@ -10,31 +10,116 @@
 #                  Lever:       https://api.lever.co/v0/postings/{board_token}
 #                  Ashby:       https://api.ashbyhq.com/posting-api/job-board/{board_token}
 #
-# These 5 are real, verified-working boards (checked against the live APIs while
-# building this pipeline) spanning all three ATSs, so you can confirm everything
-# works before swapping in your own target list.
+# Every entry below was verified against its live endpoint before being added —
+# no guessed slugs. Three requested companies failed verification and are NOT
+# here (tried several reasonable slug variants across all three ATSs for each,
+# all 404):
+#   - Circle       (circle, circleinternetfinancial, circlepay,
+#                    circle-internet-financial — all 404 on greenhouse/lever/ashby)
+#   - Devoted Health (devotedhealth, devoted, devotedhealthinc, devoted-health
+#                    — all 404 on greenhouse/lever/ashby)
+#   - Datavant     (datavant, datavantinc, datavanthealth, datavant-health
+#                    — all 404 on greenhouse/lever/ashby)
+# If any of these turn out to have a real board under a slug not tried here,
+# add them by hand once confirmed — don't guess.
+#
+# GitLab is kept from the original 5-company test batch as a control: its
+# matching behavior (and posting volume — largest board here) is already
+# well-characterized from prior runs, so a change in its funnel numbers is a
+# signal the FILTER changed, not that a newly-added company simply doesn't
+# post matching roles. Asana, Ro, Linear, and PostHog were dropped — their
+# existing rows stay in Postgres (jobs are never deleted) as history, but
+# they won't be polled or closed-detected going forward since they're no
+# longer in this file.
 companies:
   - slug: gitlab
     name: GitLab
     ats: greenhouse
     board_token: gitlab
 
-  - slug: asana
-    name: Asana
+  # --- Fintech / payments (BSA-regulated -> real compliance/AML/risk teams) ---
+
+  - slug: stripe
+    name: Stripe
     ats: greenhouse
-    board_token: asana
+    board_token: stripe
 
-  - slug: ro
-    name: Ro
+  - slug: plaid
+    name: Plaid
+    ats: ashby
+    board_token: plaid
+    # Plaid also has a Lever board (api.lever.co/v0/postings/plaid) that
+    # returns 200 with 0 postings -- looks abandoned/migrated-away-from.
+    # Ashby is the real, active board (104 postings at verification time).
+
+  - slug: brex
+    name: Brex
+    ats: greenhouse
+    board_token: brex
+
+  - slug: ramp
+    name: Ramp
+    ats: ashby
+    board_token: ramp
+
+  - slug: affirm
+    name: Affirm
+    ats: greenhouse
+    board_token: affirm
+
+  - slug: marqeta
+    name: Marqeta
+    ats: greenhouse
+    board_token: marqeta
+
+  - slug: chime
+    name: Chime
+    ats: greenhouse
+    board_token: chime
+
+  - slug: wise
+    name: Wise
+    ats: greenhouse
+    board_token: wise
+
+  - slug: coinbase
+    name: Coinbase
+    ats: greenhouse
+    board_token: coinbase
+
+  - slug: betterment
+    name: Betterment
+    ats: greenhouse
+    board_token: betterment
+
+  - slug: sofi
+    name: SoFi
+    ats: greenhouse
+    board_token: sofi
+
+  - slug: block
+    name: Block
+    ats: greenhouse
+    board_token: block
+
+  # --- Healthcare payers (payer side, not provider) ---
+
+  - slug: oscar
+    name: Oscar Health
+    ats: greenhouse
+    board_token: oscar
+
+  - slug: includedhealth
+    name: Included Health
     ats: lever
-    board_token: ro
+    board_token: includedhealth
 
-  - slug: linear
-    name: Linear
+  - slug: cedar
+    name: Cedar
     ats: ashby
-    board_token: linear
+    board_token: cedar
 
-  - slug: posthog
-    name: PostHog
-    ats: ashby
-    board_token: posthog
+  - slug: komodohealth
+    name: Komodo Health
+    ats: greenhouse
+    board_token: komodohealth
