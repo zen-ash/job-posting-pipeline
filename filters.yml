@@ -9,10 +9,12 @@
 #   2. title contains NONE of title_exclude_keywords
 #   3. location contains at least one of location_include_keywords
 #
-# All matching is case-insensitive and whole-word/phrase, so "sql" won't match
-# "MySQL" and "us" won't match inside "Russia" — see job_ingest/filters.py.
-# (US state codes below are the one exception: matched case-SENSITIVE and only
-# immediately after a comma — see location_include_state_codes.)
+# All matching is case-insensitive, period-stripped, and whole-word/phrase, so
+# "sql" won't match "MySQL", "us" won't match inside "Russia", and "U.S." /
+# "Sr." match exactly like "US" / "Sr" without needing separate keyword
+# entries for the punctuated form — see job_ingest/filters.py. (US state codes
+# below are the one exception: matched case-SENSITIVE and only immediately
+# after a comma — see location_include_state_codes.)
 
 title_include_keywords:
   # generic — 'analyst' alone catches most target titles
@@ -73,8 +75,13 @@ title_include_keywords:
 
 title_exclude_keywords:
   - senior
-  - sr.
-  - staff
+  - sr
+  # "staff" alone excluded too much -- "Staff Analyst" is an ENTRY-LEVEL title
+  # at universities and government agencies (both on the target list), and a
+  # bare "staff" exclude was silently killing exactly those postings. Narrowed
+  # to the specific senior-track phrases that were actually meant.
+  - staff engineer
+  - staff software
   - principal
   - lead
   - manager
@@ -98,6 +105,20 @@ title_exclude_keywords:
   - iii
   - iv
 
+  # roles that are structurally different from data/analyst work even when
+  # they share vocabulary with the includes above (e.g. "quality" overlapping
+  # "data quality"). NOT "marketing" -- marketing analytics is a legitimate
+  # target, unlike these.
+  - qa
+  - quality assurance
+  - help desk
+  - helpdesk
+  - service desk
+  - desktop
+  - technical support
+  - it support
+  - investment banking
+
 # Location must contain at least one of location_include_keywords OR
 # location_include_state_codes (below). ATS location fields are messy
 # multi-value strings (e.g. "Remote, Canada; Remote, United States", or plain
@@ -112,15 +133,17 @@ title_exclude_keywords:
 location_include_keywords:
   - united states
   - usa
-  - u.s.
-  # bare "US" (case-insensitive, whole word) -- covers formats where the
+  # bare "US" (case-insensitive, whole word, period-stripped -- see
+  # job_ingest/filters.py) covers "U.S." and every other format where the
   # country marker isn't part of one of the fixed phrases below, e.g. real
-  # data: "US IL - Remote", "US WA Seattle - Remote". State codes get their
-  # own stricter matching (location_include_state_codes) precisely because a
-  # bare 2-letter code has collision risk that bare "us" doesn't in practice.
+  # data: "US IL - Remote", "US WA Seattle - Remote", "Remote (US)". State
+  # codes get their own stricter matching (location_include_state_codes)
+  # precisely because a bare 2-letter code has collision risk that bare "us"
+  # doesn't in practice. (Used to also carry explicit "u.s." and "remote (us)"
+  # entries here -- both now redundant once period-stripping and this bare
+  # "us" entry exist, so removed rather than left as unreachable duplicates.)
   - us
   - remote, us
-  - remote (us)
   - remote - us
   - north america # broad: also covers Canada/Mexico, permissive by design
 

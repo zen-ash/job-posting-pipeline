@@ -120,6 +120,10 @@ def run_full_ingest(args: argparse.Namespace) -> int:
             f"{digest_result.matched_total} matched filters, "
             f"{digest_result.included} {included_phrase}"
         )
+        if digest_result.title_excluded:
+            print("  excluded by title (matched an include keyword, tune filters.yml):")
+            for keyword, count in digest_result.title_excluded[:15]:
+                print(f'    {count:>3}x  "{keyword}"')
         if digest_result.location_excluded:
             print("  excluded by location (passed title filter, tune filters.yml):")
             for location, count in digest_result.location_excluded[:15]:

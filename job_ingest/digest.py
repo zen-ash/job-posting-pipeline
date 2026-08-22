@@ -72,6 +72,13 @@ class DigestResult:
     # filters.yml's location_include_keywords can be tuned against what's
     # actually being missed. Sorted by count, most-excluded first.
     location_excluded: list[tuple[str, int]] | None = None
+    # [(exclude_keyword, count), ...] — postings that matched a title include
+    # keyword but were killed by a title exclude keyword, grouped by WHICH
+    # exclude keyword fired. The title-side symmetric counterpart to
+    # location_excluded: exclude keywords were otherwise unobservable — you'd
+    # never know a posting existed to be excluded in the first place. Sorted
+    # by count, most-excluded first.
+    title_excluded: list[tuple[str, int]] | None = None
 
 
 def count_pending_postings(conn: psycopg.Connection) -> int:
@@ -105,20 +112,35 @@ def fetch_pending_postings(
 
 def apply_filters(
     postings: list[PendingPosting], filters: Filters
-) -> tuple[list[PendingPosting], list[tuple[str, int]]]:
-    """Returns (matched, location_excluded).
+) -> tuple[list[PendingPosting], list[tuple[str, int]], list[tuple[str, int]]]:
+    """Returns (matched, location_excluded, title_excluded).
 
-    location_excluded covers only postings that passed the TITLE filter but
-    failed on location — those are the ones actually worth reviewing to tune
-    location_include_keywords; postings that never passed the title filter in
-    the first place aren't a location-tuning signal.
+    location_excluded covers postings that matched a title include keyword
+    and passed the title exclude check, but failed on location — those are
+    the ones worth reviewing to tune location_include_keywords.
+
+    title_excluded covers postings that matched a title include keyword but
+    were then killed by a title exclude keyword, grouped by which exclude
+    keyword fired — the symmetric report for tuning title_exclude_keywords,
+    the same way location_excluded is for location_include_keywords.
+
+    A posting that never matched any include keyword in the first place isn't
+    a signal for either report — there's nothing to tune from "didn't match
+    any of the include keywords at all".
     """
     matched = []
     location_excluded_counts: Counter[str] = Counter()
+    title_excluded_counts: Counter[str] = Counter()
 
     for p in postings:
-        if not filters_module.matches_title(p.title, filters):
+        if not filters_module.title_include_match(p.title, filters):
             continue
+
+        exclude_hit = filters_module.title_exclude_hit(p.title, filters)
+        if exclude_hit is not None:
+            title_excluded_counts[exclude_hit] += 1
+            continue
+
         if filters_module.matches_location(p.location, filters):
             matched.append(p)
         else:
@@ -127,7 +149,8 @@ def apply_filters(
     location_excluded = sorted(
         location_excluded_counts.items(), key=lambda kv: kv[1], reverse=True
     )
-    return matched, location_excluded
+    title_excluded = sorted(title_excluded_counts.items(), key=lambda kv: kv[1], reverse=True)
+    return matched, location_excluded, title_excluded
 
 
 def _round_robin_by_company(postings: list[PendingPosting]) -> list[PendingPosting]:
@@ -233,6 +256,7 @@ class _Selection:
     postings: list[PendingPosting]  # already round-robined + capped
     overflow: int
     location_excluded: list[tuple[str, int]]
+    title_excluded: list[tuple[str, int]]
 
 
 def _select_for_digest(conn: psycopg.Connection, filters_path: str) -> _Selection:
@@ -241,20 +265,22 @@ def _select_for_digest(conn: psycopg.Connection, filters_path: str) -> _Selectio
     """
     pending_total = count_pending_postings(conn)
     if pending_total == 0:
-        return _Selection(0, 0, [], 0, [])
+        return _Selection(0, 0, [], 0, [], [])
 
     all_pending = fetch_pending_postings(conn)
     filters = filters_module.load_filters(filters_path)
-    matched, location_excluded = apply_filters(all_pending, filters)
+    matched, location_excluded, title_excluded = apply_filters(all_pending, filters)
     matched_total = len(matched)
 
     if matched_total == 0:
-        return _Selection(pending_total, 0, [], 0, location_excluded)
+        return _Selection(pending_total, 0, [], 0, location_excluded, title_excluded)
 
     ordered = _round_robin_by_company(matched)
     postings = ordered[:MAX_POSTINGS_PER_DIGEST]
     overflow = max(0, matched_total - len(postings))
-    return _Selection(pending_total, matched_total, postings, overflow, location_excluded)
+    return _Selection(
+        pending_total, matched_total, postings, overflow, location_excluded, title_excluded
+    )
 
 
 def preview_digest(
@@ -272,6 +298,7 @@ def preview_digest(
         included=len(selection.postings),
         sent=False,
         location_excluded=selection.location_excluded,
+        title_excluded=selection.title_excluded,
     )
 
 
@@ -284,6 +311,7 @@ def send_digest(
     postings = selection.postings
     overflow = selection.overflow
     location_excluded = selection.location_excluded
+    title_excluded = selection.title_excluded
 
     if pending_total == 0:
         return DigestResult(pending_total=0, matched_total=0, included=0, sent=False)
@@ -295,6 +323,7 @@ def send_digest(
             included=0,
             sent=False,
             location_excluded=location_excluded,
+            title_excluded=title_excluded,
         )
 
     resend.api_key = os.environ.get("RESEND_API_KEY", "")
@@ -308,6 +337,7 @@ def send_digest(
             sent=False,
             error="RESEND_API_KEY / DIGEST_FROM_EMAIL / DIGEST_TO_EMAIL not fully set",
             location_excluded=location_excluded,
+            title_excluded=title_excluded,
         )
 
     params: resend.Emails.SendParams = {
@@ -331,6 +361,7 @@ def send_digest(
             sent=False,
             error=str(exc),
             location_excluded=location_excluded,
+            title_excluded=title_excluded,
         )
 
     # Send succeeded. Mark exactly what was sent, as its own commit — see the
@@ -342,4 +373,5 @@ def send_digest(
         included=len(postings),
         sent=True,
         location_excluded=location_excluded,
+        title_excluded=title_excluded,
     )

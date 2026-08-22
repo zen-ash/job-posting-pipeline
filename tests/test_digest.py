@@ -125,11 +125,13 @@ def test_apply_filters_keeps_only_title_and_location_matches():
         make_posting("Acme", "Data Analyst", location="Remote, Germany", external_id="3"),
         make_posting("Acme", "Account Executive", location=us, external_id="4"),
     ]
-    matched, location_excluded = apply_filters(postings, FILTERS)
+    matched, location_excluded, title_excluded = apply_filters(postings, FILTERS)
 
     assert [p.external_id for p in matched] == ["1"]
-    # Only postings 2 title-fails (excluded), 3 title-passes but location-fails,
-    # 4 title-fails -- so location_excluded should reflect only posting 3.
+    # posting 2 matched an include but was killed by "senior" -- title_excluded.
+    # posting 3 passed title but failed location -- location_excluded.
+    # posting 4 never matched any include keyword -- not a signal for either.
+    assert title_excluded == [("senior", 1)]
     assert location_excluded == [("Remote, Germany", 1)]
 
 
@@ -139,7 +141,7 @@ def test_apply_filters_groups_location_excluded_by_raw_location_string():
         make_posting("B", "Data Engineer", location="Remote, Germany", external_id="2"),
         make_posting("C", "Data Engineer", location="Remote, France", external_id="3"),
     ]
-    _, location_excluded = apply_filters(postings, FILTERS)
+    _, location_excluded, _ = apply_filters(postings, FILTERS)
 
     assert dict(location_excluded) == {"Remote, Germany": 2, "Remote, France": 1}
     # most-excluded first
@@ -148,9 +150,38 @@ def test_apply_filters_groups_location_excluded_by_raw_location_string():
 
 def test_apply_filters_missing_location_is_labeled_and_counted():
     postings = [make_posting("A", "Data Engineer", location=None, external_id="1")]
-    _, location_excluded = apply_filters(postings, FILTERS)
+    _, location_excluded, _ = apply_filters(postings, FILTERS)
 
     assert location_excluded == [("(no location given)", 1)]
+
+
+def test_apply_filters_groups_title_excluded_by_which_exclude_keyword_fired():
+    us = "Remote, United States"
+    postings = [
+        make_posting("A", "Senior Data Analyst", location=us, external_id="1"),
+        make_posting("B", "Senior Data Engineer", location=us, external_id="2"),
+        make_posting("C", "Data Analyst Manager", location=us, external_id="3"),
+        make_posting("D", "Data Analyst", location=us, external_id="4"),
+    ]
+    matched, _, title_excluded = apply_filters(postings, FILTERS)
+
+    assert [p.external_id for p in matched] == ["4"]
+    assert dict(title_excluded) == {"senior": 2, "manager": 1}
+    # most-excluded first
+    assert title_excluded[0] == ("senior", 2)
+
+
+def test_apply_filters_title_excluded_ignores_postings_that_never_matched_an_include():
+    # A title with no include keyword at all isn't a tuning signal for either
+    # report, even if it happens to also contain an exclude keyword.
+    postings = [
+        make_posting("A", "Senior Account Executive", location="Remote, US", external_id="1")
+    ]
+    matched, location_excluded, title_excluded = apply_filters(postings, FILTERS)
+
+    assert matched == []
+    assert location_excluded == []
+    assert title_excluded == []
 
 
 # --- round robin -------------------------------------------------------------

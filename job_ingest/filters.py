@@ -38,30 +38,42 @@ def load_filters(path: str | Path = DEFAULT_FILTERS_PATH) -> Filters:
     )
 
 
-def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
-    """Whole-word/phrase, case-insensitive match of any keyword in `text`.
-
-    Word-boundary (not plain substring) matching on purpose: a bare substring
-    check would match "us" inside "Russia" or "Australia", and "sql" inside
-    "MySQL".
-
-    Uses (?<!\\w)...(?!\\w) rather than \\b\\b. They're equivalent for a keyword
-    that starts and ends with a word character, but \\b breaks for one that
-    ends in punctuation: \\b requires an actual transition between a word char
-    and a non-word char, and if the keyword's last character is already
-    non-word (e.g. "u.s." ending in ".", or "remote (us)" ending in ")"),
-    there's no such transition left to find when the next real character is
-    -also- non-word (a comma, a space, end of string) — so the trailing \\b
-    silently never matches and the keyword is dead. (?!\\w) has no such
-    requirement: it only asserts the next character isn't a word character,
-    which is true at end-of-string or before another punctuation character.
-    Confirmed empirically: "u.s." and "remote (us)" were both silently dead
-    under \\b before this fix — neither matched a single real posting.
+def _normalize(text: str) -> str:
+    """Lowercase and strip periods, so "U.S." and "US" compare equal, "Sr."
+    and "Sr" compare equal, etc. Applied to both the searched text and every
+    keyword before matching, so no keyword ever needs a separate
+    punctuation-bearing variant to catch the punctuation-free spelling — this
+    replaced an earlier fix that instead special-cased the regex boundary for
+    individual punctuation-ending keywords (it worked, but only ever grew one
+    instance at a time; this kills the whole class up front).
     """
-    lowered = text.lower()
-    return any(
-        re.search(rf"(?<!\w){re.escape(kw.lower())}(?!\w)", lowered) for kw in keywords
-    )
+    return text.lower().replace(".", "")
+
+
+def _find_match(text: str, keywords: tuple[str, ...]) -> str | None:
+    """Returns the first keyword (in list order) that matches `text` as a
+    whole word/phrase, or None if none do.
+
+    Whole-word/phrase (not plain substring) matching on purpose: a bare
+    substring check would match "us" inside "Russia" or "Australia", and
+    "sql" inside "MySQL". Uses (?<!\\w)...(?!\\w) rather than \\b\\b: \\b
+    requires an actual transition between a word char and a non-word char,
+    and if a keyword's last character is non-word (e.g. a keyword ending in
+    "(" or ")"), there's no such transition left when the next real character
+    is -also- non-word — so a plain \\b silently never matches there. (?!\\w)
+    has no such requirement: it only asserts the next character isn't a word
+    character, true at end-of-string or before more punctuation.
+    """
+    normalized = _normalize(text)
+    for kw in keywords:
+        pattern = rf"(?<!\w){re.escape(_normalize(kw))}(?!\w)"
+        if re.search(pattern, normalized):
+            return kw
+    return None
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return _find_match(text, keywords) is not None
 
 
 def _contains_state_code(text: str, codes: tuple[str, ...]) -> bool:
@@ -81,10 +93,25 @@ def _contains_state_code(text: str, codes: tuple[str, ...]) -> bool:
     return any(re.search(rf",\s*{re.escape(code)}(?!\w)", text) for code in codes)
 
 
+def title_include_match(title: str, filters: Filters) -> bool:
+    return _contains_any(title, filters.title_include_keywords)
+
+
+def title_exclude_hit(title: str, filters: Filters) -> str | None:
+    """The specific exclude keyword that matches `title`, or None if none do.
+
+    Exposed separately from matches_title (rather than folded into a plain
+    bool) so a caller can report WHICH exclude keyword killed a posting —
+    the title-side counterpart to knowing which raw location string failed
+    the location filter. See digest.apply_filters.
+    """
+    return _find_match(title, filters.title_exclude_keywords)
+
+
 def matches_title(title: str, filters: Filters) -> bool:
-    if not _contains_any(title, filters.title_include_keywords):
+    if not title_include_match(title, filters):
         return False
-    return not _contains_any(title, filters.title_exclude_keywords)
+    return title_exclude_hit(title, filters) is None
 
 
 def matches_location(location: str | None, filters: Filters) -> bool:

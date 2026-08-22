@@ -6,7 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from job_ingest.filters import Filters, load_filters, matches, matches_location, matches_title
+from job_ingest.filters import (
+    Filters,
+    load_filters,
+    matches,
+    matches_location,
+    matches_title,
+    title_exclude_hit,
+    title_include_match,
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 REAL_FILTERS = load_filters(REPO_ROOT / "filters.yml")
@@ -320,3 +328,111 @@ def test_non_us_location_stays_excluded(location):
 def test_non_us_locations_list_has_eleven_distinct_entries():
     # Guards the list above itself against accidental duplication/shrinkage.
     assert len(NON_US_LOCATIONS) == len(set(NON_US_LOCATIONS)) == 11
+
+
+# --- period normalization ----------------------------------------------------
+#
+# Periods are stripped from both the searched text and every keyword before
+# matching, so "U.S." and "US" compare equal, "Sr." and "Sr" compare equal,
+# without needing a separate punctuated-form keyword for each. This replaced
+# explicit "u.s." / "remote (us)" entries in filters.yml, which are now
+# redundant (and were removed) rather than kept as unreachable duplicates.
+
+
+def test_period_normalization_makes_punctuated_and_bare_forms_equivalent():
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=(),
+        location_include_keywords=("us",),
+    )
+    assert matches_location("Remote, U.S.", filters) is True
+    assert matches_location("Remote, US", filters) is True
+
+
+def test_period_normalization_applies_to_title_excludes_too():
+    filters = Filters(
+        title_include_keywords=("analyst",),
+        title_exclude_keywords=("sr",),
+        location_include_keywords=(),
+    )
+    assert matches_title("Sr. Data Analyst", filters) is False
+    assert matches_title("Sr Data Analyst", filters) is False
+
+
+def test_u_dot_s_dot_and_remote_parenthetical_us_no_longer_need_explicit_entries():
+    # Confirms the real filters.yml doesn't carry "u.s."/"remote (us)" as
+    # separate entries anymore -- bare "us" + period-stripping covers both.
+    assert "u.s." not in REAL_FILTERS.location_include_keywords
+    assert "remote (us)" not in REAL_FILTERS.location_include_keywords
+    assert matches_location("Remote, U.S.", REAL_FILTERS) is True
+    assert matches_location("Remote (US)", REAL_FILTERS) is True
+
+
+# --- title_include_match / title_exclude_hit --------------------------------
+
+
+def test_title_include_match_true_only_with_an_include_keyword():
+    filters = Filters(
+        title_include_keywords=("analyst",),
+        title_exclude_keywords=(),
+        location_include_keywords=(),
+    )
+    assert title_include_match("Data Analyst", filters) is True
+    assert title_include_match("Account Executive", filters) is False
+
+
+def test_title_exclude_hit_returns_the_keyword_that_matched():
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=("senior", "manager"),
+        location_include_keywords=(),
+    )
+    assert title_exclude_hit("Senior Data Analyst", filters) == "senior"
+    assert title_exclude_hit("Data Analyst Manager", filters) == "manager"
+    assert title_exclude_hit("Data Analyst", filters) is None
+
+
+# --- new exclude keywords: qa/support/investment-banking, not marketing ----
+
+
+def test_qa_and_support_roles_excluded_against_real_filters_yml():
+    assert matches_title("QA Analyst", REAL_FILTERS) is False
+    assert matches_title("Quality Assurance Analyst", REAL_FILTERS) is False
+    assert matches_title("Help Desk Analyst", REAL_FILTERS) is False
+    assert matches_title("Helpdesk Support Analyst", REAL_FILTERS) is False
+    assert matches_title("Service Desk Analyst", REAL_FILTERS) is False
+    assert matches_title("Desktop Support Analyst", REAL_FILTERS) is False
+    assert matches_title("Technical Support Analyst", REAL_FILTERS) is False
+    assert matches_title("IT Support Analyst", REAL_FILTERS) is False
+    assert matches_title("Investment Banking Analyst", REAL_FILTERS) is False
+
+
+def test_marketing_analytics_not_excluded_against_real_filters_yml():
+    # Explicitly NOT excluded -- marketing analytics is a legitimate target,
+    # unlike the QA/support/investment-banking roles above.
+    assert matches_title("Marketing Analytics Analyst", REAL_FILTERS) is True
+
+
+# --- "staff" narrowed to specific phrases ------------------------------------
+
+
+def test_staff_analyst_is_not_excluded_against_real_filters_yml():
+    # The whole point of narrowing "staff" -- this is an entry-level title at
+    # universities and government agencies, both on the target list. A bare
+    # "staff" exclude was silently killing exactly these postings.
+    assert matches_title("Staff Analyst", REAL_FILTERS) is True
+
+
+def test_staff_engineer_and_staff_software_still_excluded_against_real_filters_yml():
+    # "Staff Engineer"/"Staff Software Engineer" alone don't match any title
+    # include keyword (no bare "engineer" in title_include_keywords), so they
+    # -already- fail matches_title before the exclude check ever runs -- that
+    # would make an assertion against matches_title alone pass for the wrong
+    # reason. title_exclude_hit isolates the actual claim: the exclude phrases
+    # still fire on these titles.
+    assert title_exclude_hit("Staff Engineer", REAL_FILTERS) == "staff engineer"
+    assert title_exclude_hit("Staff Software Engineer", REAL_FILTERS) == "staff software"
+
+    # And with a real include keyword present too, the exclude still wins
+    # end-to-end through matches_title, same as any other exclude.
+    assert matches_title("Staff Software Analyst", REAL_FILTERS) is False
