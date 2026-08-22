@@ -14,14 +14,61 @@
 # job_ingest/filters.py.
 
 title_include_keywords:
-  - data analyst
+  # generic — 'analyst' alone catches most target titles
+  - analyst
   - analytics
+  - data analyst
   - business intelligence
   - data engineer
   - data scientist
   - reporting
   - insights
   - sql
+
+  # audit & controls
+  - audit
+  - internal controls
+  - sox
+  - risk advisory
+
+  # compliance & financial crime
+  - compliance
+  - aml
+  - anti-money laundering
+  - financial crimes
+  - kyc
+  - due diligence
+  - transaction monitoring
+  - sanctions
+  - ofac
+  - bsa
+  - regulatory reporting
+
+  # risk
+  - risk
+  - operational risk
+  - vendor risk
+  - third-party risk
+  - enterprise risk
+  - model validation
+
+  # governance & data
+  - data governance
+  - grc
+
+  # healthcare
+  - claims
+  - risk adjustment
+  - revenue cycle
+  - healthcare data
+
+  # early-career signals
+  - intern
+  - internship
+  - associate
+  - entry level
+  - new grad
+  - university  
 
 title_exclude_keywords:
   - senior
@@ -31,7 +78,17 @@ title_exclude_keywords:
   - manager
   - director
   - vp
+  - vice president
   - head of
+  - sales associate
+  - associate director
+  - associate general counsel
+  - associate professor
+
+  # legal roles pulled in by the broad compliance/risk includes above
+  - counsel
+  - attorney
+  - paralegal
 
 # Location must contain at least one of these. ATS location fields are messy
 # multi-value strings (e.g. "Remote, Canada; Remote, United States", or plain

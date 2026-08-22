@@ -226,17 +226,67 @@ def build_html_body(postings: list[PendingPosting], overflow: int) -> str:
     )
 
 
-def send_digest(
-    conn: psycopg.Connection, filters_path: str = DEFAULT_FILTERS_PATH
-) -> DigestResult:
+@dataclass
+class _Selection:
+    pending_total: int
+    matched_total: int
+    postings: list[PendingPosting]  # already round-robined + capped
+    overflow: int
+    location_excluded: list[tuple[str, int]]
+
+
+def _select_for_digest(conn: psycopg.Connection, filters_path: str) -> _Selection:
+    """The pure selection pipeline (fetch -> filter -> round-robin -> cap),
+    shared by both `preview_digest` (no send, no DB write) and `send_digest`.
+    """
     pending_total = count_pending_postings(conn)
     if pending_total == 0:
-        return DigestResult(pending_total=0, matched_total=0, included=0, sent=False)
+        return _Selection(0, 0, [], 0, [])
 
     all_pending = fetch_pending_postings(conn)
     filters = filters_module.load_filters(filters_path)
     matched, location_excluded = apply_filters(all_pending, filters)
     matched_total = len(matched)
+
+    if matched_total == 0:
+        return _Selection(pending_total, 0, [], 0, location_excluded)
+
+    ordered = _round_robin_by_company(matched)
+    postings = ordered[:MAX_POSTINGS_PER_DIGEST]
+    overflow = max(0, matched_total - len(postings))
+    return _Selection(pending_total, matched_total, postings, overflow, location_excluded)
+
+
+def preview_digest(
+    conn: psycopg.Connection, filters_path: str = DEFAULT_FILTERS_PATH
+) -> DigestResult:
+    """Runs the exact same fetch/filter/round-robin/cap pipeline as
+    `send_digest`, for visibility into the funnel counts, but never calls
+    Resend and never marks anything notified. Use this (e.g. via
+    `--skip-digest`) to see what a real send would include without sending it.
+    """
+    selection = _select_for_digest(conn, filters_path)
+    return DigestResult(
+        pending_total=selection.pending_total,
+        matched_total=selection.matched_total,
+        included=len(selection.postings),
+        sent=False,
+        location_excluded=selection.location_excluded,
+    )
+
+
+def send_digest(
+    conn: psycopg.Connection, filters_path: str = DEFAULT_FILTERS_PATH
+) -> DigestResult:
+    selection = _select_for_digest(conn, filters_path)
+    pending_total = selection.pending_total
+    matched_total = selection.matched_total
+    postings = selection.postings
+    overflow = selection.overflow
+    location_excluded = selection.location_excluded
+
+    if pending_total == 0:
+        return DigestResult(pending_total=0, matched_total=0, included=0, sent=False)
 
     if matched_total == 0:
         return DigestResult(
@@ -246,10 +296,6 @@ def send_digest(
             sent=False,
             location_excluded=location_excluded,
         )
-
-    ordered = _round_robin_by_company(matched)
-    postings = ordered[:MAX_POSTINGS_PER_DIGEST]
-    overflow = max(0, matched_total - len(postings))
 
     resend.api_key = os.environ.get("RESEND_API_KEY", "")
     from_email = os.environ.get("DIGEST_FROM_EMAIL", "")

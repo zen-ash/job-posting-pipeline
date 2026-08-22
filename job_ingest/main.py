@@ -104,28 +104,36 @@ def run_full_ingest(args: argparse.Namespace) -> int:
         companies_failed = len(board_errors)
         status = compute_run_status(len(companies), companies_failed)
 
-        digest_result = digest.DigestResult(
-            pending_total=0, matched_total=0, included=0, sent=False
-        )
-        if not args.skip_digest:
+        if args.skip_digest:
+            # Still run the full fetch/filter/round-robin pipeline so the
+            # funnel counts are real -- just never call Resend or mark
+            # anything notified. --skip-digest is for seeing what a send
+            # would include without actually sending it.
+            digest_result = digest.preview_digest(conn)
+        else:
             digest_result = digest.send_digest(conn)
-            print(
-                f"digest: {digest_result.pending_total} new postings, "
-                f"{digest_result.matched_total} matched filters, "
-                f"{digest_result.included} included in this send"
-            )
-            if digest_result.location_excluded:
-                print("  excluded by location (passed title filter, tune filters.yml):")
-                for location, count in digest_result.location_excluded[:15]:
-                    print(f"    {count:>3}x  {location}")
-            if digest_result.error:
-                print(f"digest FAILED: {digest_result.error}", file=sys.stderr)
-            elif digest_result.sent:
-                print(f"digest sent: {digest_result.included} postings")
-            elif digest_result.pending_total == 0:
-                print("digest: nothing pending, skipped")
-            elif digest_result.matched_total == 0:
-                print("digest: nothing matched the filters, skipped")
+
+        label = "preview (--skip-digest)" if args.skip_digest else "digest"
+        included_phrase = "would be included" if args.skip_digest else "included in this send"
+        print(
+            f"{label}: {digest_result.pending_total} new postings, "
+            f"{digest_result.matched_total} matched filters, "
+            f"{digest_result.included} {included_phrase}"
+        )
+        if digest_result.location_excluded:
+            print("  excluded by location (passed title filter, tune filters.yml):")
+            for location, count in digest_result.location_excluded[:15]:
+                print(f"    {count:>3}x  {location}")
+        if args.skip_digest:
+            pass  # never attempts a send, nothing more to report
+        elif digest_result.error:
+            print(f"digest FAILED: {digest_result.error}", file=sys.stderr)
+        elif digest_result.sent:
+            print(f"digest sent: {digest_result.included} postings")
+        elif digest_result.pending_total == 0:
+            print("digest: nothing pending, skipped")
+        elif digest_result.matched_total == 0:
+            print("digest: nothing matched the filters, skipped")
 
         finished_at = datetime.now(UTC)
 

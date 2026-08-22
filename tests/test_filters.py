@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from job_ingest.filters import Filters, matches, matches_location, matches_title
+from pathlib import Path
+
+from job_ingest.filters import Filters, load_filters, matches, matches_location, matches_title
+
+REPO_ROOT = Path(__file__).parent.parent
 
 FILTERS = Filters(
     title_include_keywords=(
@@ -123,3 +127,45 @@ def test_matches_requires_both_title_and_location():
     assert matches("Data Analyst", "Remote, United States", FILTERS) is True
     assert matches("Data Analyst", "Remote, Germany", FILTERS) is False
     assert matches("Account Executive", "Remote, United States", FILTERS) is False
+
+
+# --- exclude beats include -------------------------------------------------
+
+
+def test_exclude_beats_include_when_both_match():
+    # "risk" is an include keyword and "director" is an exclude keyword --
+    # both fire on this title, and exclude must win.
+    filters = Filters(
+        title_include_keywords=("associate", "risk"),
+        title_exclude_keywords=("director",),
+        location_include_keywords=(),
+    )
+    assert matches_title("Associate Director, Risk Management", filters) is False
+
+
+def test_exclude_beats_include_against_the_real_filters_yml():
+    # Regression test against the actual project config, not a synthetic
+    # Filters object -- if filters.yml ever loses this exclude, this fails.
+    real_filters = load_filters(REPO_ROOT / "filters.yml")
+
+    # Same include signals ("associate", "risk"), no exclude keyword present --
+    # proves the include side genuinely matches, so the next assertion isn't
+    # vacuously true.
+    assert matches_title("Associate, Risk Management", real_filters) is True
+
+    # Adding "Director" must flip this to excluded even though the title still
+    # matches "associate" and "risk" in title_include_keywords.
+    assert matches_title("Associate Director, Risk Management", real_filters) is False
+
+
+def test_legal_roles_excluded_despite_broad_compliance_and_risk_includes():
+    # "compliance" and "risk" are broad includes in the real filters.yml and
+    # will fire on legal-adjacent titles that aren't actually data/analyst
+    # roles -- counsel/attorney/paralegal excludes exist specifically to catch
+    # those.
+    real_filters = load_filters(REPO_ROOT / "filters.yml")
+
+    assert matches_title("Compliance Counsel", real_filters) is False
+    assert matches_title("Attorney, Regulatory Compliance", real_filters) is False
+    assert matches_title("Paralegal, Risk & Compliance", real_filters) is False
+    assert matches_title("Vice President, Compliance", real_filters) is False
