@@ -224,6 +224,9 @@ def record_run(
     jobs_closed: int,
     error: str | None,
     board_errors: list[dict],
+    digest_sent: bool = False,
+    digest_postings_sent: int = 0,
+    digest_error: str | None = None,
 ) -> int:
     with conn.cursor() as cur:
         cur.execute(
@@ -231,9 +234,10 @@ def record_run(
             INSERT INTO runs (
                 started_at, finished_at, status, companies_total, companies_succeeded,
                 companies_failed, jobs_seen, jobs_new, jobs_updated, jobs_reopened,
-                jobs_closed, error, board_errors
+                jobs_closed, error, board_errors, digest_sent, digest_postings_sent,
+                digest_error
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -250,6 +254,9 @@ def record_run(
                 jobs_closed,
                 error,
                 Json(board_errors),
+                digest_sent,
+                digest_postings_sent,
+                digest_error,
             ),
         )
         run_id = cur.fetchone()[0]

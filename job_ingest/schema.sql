@@ -75,5 +75,21 @@ CREATE TABLE IF NOT EXISTS runs (
     error                 TEXT,
     -- [{"company_slug": ..., "ats": ..., "error": "..."}] for boards that failed
     -- this run without failing the run as a whole.
-    board_errors          JSONB NOT NULL DEFAULT '[]'::jsonb
+    board_errors          JSONB NOT NULL DEFAULT '[]'::jsonb,
+    -- Digest outcome, separate from ingestion `status` above on purpose: a run
+    -- can ingest cleanly and still fail to email (or vice versa isn't possible,
+    -- but conflating the two in one enum would still blur what actually broke).
+    digest_sent            BOOLEAN NOT NULL DEFAULT false,
+    digest_postings_sent   INT NOT NULL DEFAULT 0,
+    digest_error           TEXT
 );
+
+-- Lightweight forward-only "migrations" without a separate framework: new
+-- columns get added to the CREATE TABLE above (for a database created fresh
+-- from this file, e.g. a new Neon project) AND as an ADD COLUMN IF NOT EXISTS
+-- below (for a database — like the local docker-compose one — that already
+-- existed before the column was added). Both run every time via ensure_schema()
+-- and are no-ops once applied.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_sent BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_postings_sent INT NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_error TEXT;

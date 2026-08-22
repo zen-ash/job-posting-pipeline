@@ -14,7 +14,7 @@ targeting entry-level data engineering / data analyst roles.
 - [x] 1. Repo skeleton, venv, requirements, `.gitignore`, `.env.example`
 - [x] 2. ATS fetchers + normalization to a `Posting` dataclass (fixture-tested, no DB)
 - [x] 3. Postgres schema + upsert logic + new/closed detection
-- [ ] 4. Digest email
+- [x] 4. Digest email
 - [ ] 5. GitHub Actions daily cron
 - [ ] 6. Full README: architecture, schema diagram, what's next
 

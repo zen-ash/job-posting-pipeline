@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 import requests
 from dotenv import load_dotenv
 
-from job_ingest import db
+from job_ingest import db, digest
 from job_ingest.ats import FETCHERS
 from job_ingest.config import Company, load_companies
 from job_ingest.http import BETWEEN_BOARDS_DELAY_SECONDS
@@ -103,6 +103,19 @@ def run_full_ingest(args: argparse.Namespace) -> int:
 
         companies_failed = len(board_errors)
         status = compute_run_status(len(companies), companies_failed)
+
+        digest_result = digest.DigestResult(pending_total=0, included=0, sent=False)
+        if not args.skip_digest:
+            digest_result = digest.send_digest(conn)
+            if digest_result.error:
+                print(f"digest FAILED: {digest_result.error}", file=sys.stderr)
+            elif digest_result.sent:
+                print(
+                    f"digest sent: {digest_result.included}/{digest_result.pending_total} postings"
+                )
+            else:
+                print("digest: nothing pending, skipped")
+
         finished_at = datetime.now(UTC)
 
         run_id = db.record_run(
@@ -120,6 +133,9 @@ def run_full_ingest(args: argparse.Namespace) -> int:
             jobs_closed=totals["closed"],
             error=None,
             board_errors=board_errors,
+            digest_sent=digest_result.sent,
+            digest_postings_sent=digest_result.included if digest_result.sent else 0,
+            digest_error=digest_result.error,
         )
 
         print(
@@ -132,7 +148,12 @@ def run_full_ingest(args: argparse.Namespace) -> int:
             for be in board_errors:
                 print(f"  {be['company_slug']} ({be['ats']}): {be['error']}", file=sys.stderr)
 
-        return 0 if status != "failure" else 1
+        # Ingestion status and digest status are reported separately (see
+        # schema.sql), but the process exit code needs to be a single signal —
+        # GitHub Actions only has one red/green per run. Either kind of failure
+        # should surface as a failed Action run, since both are things you'd
+        # actually want to notice.
+        return 0 if status != "failure" and not digest_result.error else 1
 
     except Exception as exc:  # noqa: BLE001 - top-level: record the crash, then re-raise
         finished_at = datetime.now(UTC)
@@ -166,6 +187,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--company", help="fetch+print only this slug from companies.yml, no DB")
     parser.add_argument("--companies-file", default="companies.yml")
+    parser.add_argument(
+        "--skip-digest",
+        action="store_true",
+        help="ingest only, don't send (or attempt to send) the digest email",
+    )
     args = parser.parse_args(argv)
 
     if args.company:
