@@ -8,10 +8,13 @@ from job_ingest.digest import (
     MAX_POSTINGS_PER_DIGEST,
     PendingPosting,
     _group_by_company,
+    _round_robin_by_company,
+    apply_filters,
     build_html_body,
     build_subject,
     build_text_body,
 )
+from job_ingest.filters import Filters
 
 
 def make_posting(company_name: str, title: str, **overrides) -> PendingPosting:
@@ -103,3 +106,94 @@ def test_html_body_includes_overflow_note_only_when_present():
 
     assert "more new posting" in with_overflow
     assert "more new posting" not in without_overflow
+
+
+# --- apply_filters ---------------------------------------------------------
+
+FILTERS = Filters(
+    title_include_keywords=("data analyst", "data engineer"),
+    title_exclude_keywords=("senior", "manager"),
+    location_include_keywords=("united states", "NY", "CA"),
+)
+
+
+def test_apply_filters_keeps_only_title_and_location_matches():
+    us = "Remote, United States"
+    postings = [
+        make_posting("Acme", "Data Analyst", location=us, external_id="1"),
+        make_posting("Acme", "Senior Data Analyst", location=us, external_id="2"),
+        make_posting("Acme", "Data Analyst", location="Remote, Germany", external_id="3"),
+        make_posting("Acme", "Account Executive", location=us, external_id="4"),
+    ]
+    matched, location_excluded = apply_filters(postings, FILTERS)
+
+    assert [p.external_id for p in matched] == ["1"]
+    # Only postings 2 title-fails (excluded), 3 title-passes but location-fails,
+    # 4 title-fails -- so location_excluded should reflect only posting 3.
+    assert location_excluded == [("Remote, Germany", 1)]
+
+
+def test_apply_filters_groups_location_excluded_by_raw_location_string():
+    postings = [
+        make_posting("A", "Data Engineer", location="Remote, Germany", external_id="1"),
+        make_posting("B", "Data Engineer", location="Remote, Germany", external_id="2"),
+        make_posting("C", "Data Engineer", location="Remote, France", external_id="3"),
+    ]
+    _, location_excluded = apply_filters(postings, FILTERS)
+
+    assert dict(location_excluded) == {"Remote, Germany": 2, "Remote, France": 1}
+    # most-excluded first
+    assert location_excluded[0] == ("Remote, Germany", 2)
+
+
+def test_apply_filters_missing_location_is_labeled_and_counted():
+    postings = [make_posting("A", "Data Engineer", location=None, external_id="1")]
+    _, location_excluded = apply_filters(postings, FILTERS)
+
+    assert location_excluded == [("(no location given)", 1)]
+
+
+# --- round robin -------------------------------------------------------------
+
+
+def test_round_robin_interleaves_across_companies():
+    postings = [
+        make_posting("Acme", "Acme 1", company_slug="acme", external_id="1"),
+        make_posting("Acme", "Acme 2", company_slug="acme", external_id="2"),
+        make_posting("Acme", "Acme 3", company_slug="acme", external_id="3"),
+        make_posting("Beta", "Beta 1", company_slug="beta", external_id="1"),
+        make_posting("Beta", "Beta 2", company_slug="beta", external_id="2"),
+    ]
+    result = _round_robin_by_company(postings)
+
+    assert [p.title for p in result] == ["Acme 1", "Beta 1", "Acme 2", "Beta 2", "Acme 3"]
+
+
+def test_round_robin_one_prolific_company_cannot_monopolize_a_capped_selection():
+    # 40 from one company, 2 each from four others -- without round-robin, a
+    # cap of 10 would be entirely (or almost entirely) the prolific company.
+    postings = [
+        make_posting("Big", f"Big {i}", company_slug="big", external_id=str(i))
+        for i in range(40)
+    ]
+    for slug in ["b1", "b2", "b3", "b4"]:
+        postings += [
+            make_posting(slug, f"{slug} {i}", company_slug=slug, external_id=str(i))
+            for i in range(2)
+        ]
+
+    capped = _round_robin_by_company(postings)[:10]
+    companies_in_top_10 = {p.company_slug for p in capped}
+
+    assert companies_in_top_10 == {"b1", "b2", "b3", "b4", "big"}
+
+
+def test_round_robin_preserves_within_company_order():
+    postings = [
+        make_posting("Acme", "First", company_slug="acme", external_id="1"),
+        make_posting("Acme", "Second", company_slug="acme", external_id="2"),
+        make_posting("Zeta", "Only", company_slug="zeta", external_id="1"),
+    ]
+    result = [p for p in _round_robin_by_company(postings) if p.company_slug == "acme"]
+
+    assert [p.title for p in result] == ["First", "Second"]

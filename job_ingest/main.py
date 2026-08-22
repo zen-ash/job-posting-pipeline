@@ -104,17 +104,28 @@ def run_full_ingest(args: argparse.Namespace) -> int:
         companies_failed = len(board_errors)
         status = compute_run_status(len(companies), companies_failed)
 
-        digest_result = digest.DigestResult(pending_total=0, included=0, sent=False)
+        digest_result = digest.DigestResult(
+            pending_total=0, matched_total=0, included=0, sent=False
+        )
         if not args.skip_digest:
             digest_result = digest.send_digest(conn)
+            print(
+                f"digest: {digest_result.pending_total} new postings, "
+                f"{digest_result.matched_total} matched filters, "
+                f"{digest_result.included} included in this send"
+            )
+            if digest_result.location_excluded:
+                print("  excluded by location (passed title filter, tune filters.yml):")
+                for location, count in digest_result.location_excluded[:15]:
+                    print(f"    {count:>3}x  {location}")
             if digest_result.error:
                 print(f"digest FAILED: {digest_result.error}", file=sys.stderr)
             elif digest_result.sent:
-                print(
-                    f"digest sent: {digest_result.included}/{digest_result.pending_total} postings"
-                )
-            else:
+                print(f"digest sent: {digest_result.included} postings")
+            elif digest_result.pending_total == 0:
                 print("digest: nothing pending, skipped")
+            elif digest_result.matched_total == 0:
+                print("digest: nothing matched the filters, skipped")
 
         finished_at = datetime.now(UTC)
 
@@ -133,6 +144,8 @@ def run_full_ingest(args: argparse.Namespace) -> int:
             jobs_closed=totals["closed"],
             error=None,
             board_errors=board_errors,
+            digest_pending_total=digest_result.pending_total,
+            digest_matched_total=digest_result.matched_total,
             digest_sent=digest_result.sent,
             digest_postings_sent=digest_result.included if digest_result.sent else 0,
             digest_error=digest_result.error,

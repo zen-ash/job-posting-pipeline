@@ -79,9 +79,13 @@ CREATE TABLE IF NOT EXISTS runs (
     -- Digest outcome, separate from ingestion `status` above on purpose: a run
     -- can ingest cleanly and still fail to email (or vice versa isn't possible,
     -- but conflating the two in one enum would still blur what actually broke).
-    digest_sent            BOOLEAN NOT NULL DEFAULT false,
-    digest_postings_sent   INT NOT NULL DEFAULT 0,
-    digest_error           TEXT
+    -- pending -> matched -> sent is the full filter funnel for that run, so
+    -- "how aggressive is the filter" is answerable from history, not just logs.
+    digest_pending_total    INT NOT NULL DEFAULT 0,
+    digest_matched_total    INT NOT NULL DEFAULT 0,
+    digest_sent             BOOLEAN NOT NULL DEFAULT false,
+    digest_postings_sent    INT NOT NULL DEFAULT 0,
+    digest_error            TEXT
 );
 
 -- Lightweight forward-only "migrations" without a separate framework: new
@@ -90,6 +94,8 @@ CREATE TABLE IF NOT EXISTS runs (
 -- below (for a database — like the local docker-compose one — that already
 -- existed before the column was added). Both run every time via ensure_schema()
 -- and are no-ops once applied.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_pending_total INT NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_matched_total INT NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_sent BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_postings_sent INT NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_error TEXT;

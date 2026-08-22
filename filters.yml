@@ -1,0 +1,106 @@
+# Digest filters — deterministic keyword rules applied to postings that are
+# otherwise pending notification (notified_at IS NULL AND closed_at IS NULL),
+# before the round-robin + 50-cap selection. This is intentionally dumb
+# (whole-word/phrase matching, no ML) — LLM-based relevance scoring is a later,
+# separate step (see README "what's next"), not this.
+#
+# A posting must satisfy ALL of:
+#   1. title contains at least one of title_include_keywords
+#   2. title contains NONE of title_exclude_keywords
+#   3. location contains at least one of location_include_keywords
+#
+# All matching is case-insensitive and whole-word/phrase (via \b...\b), so
+# "sql" won't match "MySQL" and "us" won't match inside "Russia" — see
+# job_ingest/filters.py.
+
+title_include_keywords:
+  - data analyst
+  - analytics
+  - business intelligence
+  - data engineer
+  - data scientist
+  - reporting
+  - insights
+  - sql
+
+title_exclude_keywords:
+  - senior
+  - staff
+  - principal
+  - lead
+  - manager
+  - director
+  - vp
+  - head of
+
+# Location must contain at least one of these. ATS location fields are messy
+# multi-value strings (e.g. "Remote, Canada; Remote, United States", or plain
+# "Romeoville, IL" with no country at all) so this list mixes country-level
+# phrases with the full battery of 2-letter US state codes to catch both
+# styles. Matched permissively on purpose — every posting that passes the
+# title filter but fails this one gets printed by the digest step (grouped by
+# its raw location string) specifically so this list can be tuned against
+# what's actually being missed.
+#
+# Deliberately does NOT include a bare "remote" with no country/state — that's
+# genuinely ambiguous (could be remote-anywhere) and should default to
+# excluded-and-reviewed, not silently included.
+location_include_keywords:
+  - united states
+  - usa
+  - u.s.
+  - remote, us
+  - remote (us)
+  - remote - us
+  - north america # broad: also covers Canada/Mexico, permissive by design
+  - AL
+  - AK
+  - AZ
+  - AR
+  - CA
+  - CO
+  - CT
+  - DE
+  - FL
+  - GA
+  - HI
+  - ID
+  - IL
+  - IN
+  - IA
+  - KS
+  - KY
+  - LA
+  - ME
+  - MD
+  - MA
+  - MI
+  - MN
+  - MS
+  - MO
+  - MT
+  - NE
+  - NV
+  - NH
+  - NJ
+  - NM
+  - NY
+  - NC
+  - ND
+  - OH
+  - OK
+  - OR
+  - PA
+  - RI
+  - SC
+  - SD
+  - TN
+  - TX
+  - UT
+  - VT
+  - VA
+  - WA
+  - WV
+  - WI
+  - WY
+  - DC
