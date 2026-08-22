@@ -1,0 +1,43 @@
+name: Daily job ingest
+
+"on":
+  schedule:
+    # 11:00 UTC. Actions cron is always UTC and does not observe DST, so this
+    # lands at 6:00 AM EST in winter and 7:00 AM EDT in summer (Atlanta) --
+    # a one-hour drift twice a year. See README "Why GitHub Actions" for why
+    # that's an accepted tradeoff rather than something this workflow corrects.
+    - cron: "0 11 * * *"
+  # Lets a run be triggered by hand from the Actions tab, instead of waiting
+  # for the next scheduled run to test a change.
+  workflow_dispatch: {}
+
+# Scheduled and manually-triggered runs shouldn't race each other against the
+# same Postgres database; queue rather than run concurrently.
+concurrency:
+  group: job-ingest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ingestion pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          DIGEST_FROM_EMAIL: ${{ secrets.DIGEST_FROM_EMAIL }}
+          DIGEST_TO_EMAIL: ${{ secrets.DIGEST_TO_EMAIL }}
+        run: python -m job_ingest.main
