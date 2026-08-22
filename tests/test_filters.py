@@ -413,29 +413,15 @@ def test_marketing_analytics_not_excluded_against_real_filters_yml():
     assert matches_title("Marketing Analytics Analyst", REAL_FILTERS) is True
 
 
-# --- "staff" narrowed to specific phrases ------------------------------------
-
-
-def test_staff_analyst_is_not_excluded_against_real_filters_yml():
-    # The whole point of narrowing "staff" -- this is an entry-level title at
-    # universities and government agencies, both on the target list. A bare
-    # "staff" exclude was silently killing exactly these postings.
-    assert matches_title("Staff Analyst", REAL_FILTERS) is True
-
-
-def test_staff_engineer_and_staff_software_still_excluded_against_real_filters_yml():
-    # "Staff Engineer"/"Staff Software Engineer" alone don't match any title
-    # include keyword (no bare "engineer" in title_include_keywords), so they
-    # -already- fail matches_title before the exclude check ever runs -- that
-    # would make an assertion against matches_title alone pass for the wrong
-    # reason. title_exclude_hit isolates the actual claim: the exclude phrases
-    # still fire on these titles.
-    assert title_exclude_hit("Staff Engineer", REAL_FILTERS) == "staff engineer"
-    assert title_exclude_hit("Staff Software Engineer", REAL_FILTERS) == "staff software"
-
-    # And with a real include keyword present too, the exclude still wins
-    # end-to-end through matches_title, same as any other exclude.
-    assert matches_title("Staff Software Analyst", REAL_FILTERS) is False
+# --- "staff": narrowed, then reverted back to bare (see test_bare_staff_* below) ---
+#
+# An earlier version of this config narrowed "staff" to "staff engineer"/
+# "staff software" on the theory that "Staff Analyst" is entry-level at
+# universities/government agencies. That reasoning was sound in general but
+# didn't apply to the companies actually in companies.yml (tech-adjacent
+# fintechs, where Staff outranks Senior) and was costing real digest slots --
+# see test_bare_staff_excludes_against_real_filters_yml further down, which
+# is what replaced the two tests that used to be here.
 
 
 # --- bare "associate" removed from includes ---------------------------------
@@ -499,3 +485,51 @@ def test_data_engineer_and_data_scientist_actually_still_match_real_filters_yml(
     # doesn't have the problem the test above demonstrates.
     assert matches_title("Data Engineer", REAL_FILTERS) is True
     assert matches_title("Data Scientist", REAL_FILTERS) is True
+
+
+# --- bare "staff" restored -----------------------------------------------
+
+
+def test_bare_staff_excludes_against_real_filters_yml():
+    # Re-added: at the tech-adjacent fintechs actually in companies.yml,
+    # Staff ranks above Senior, and the narrowed "staff engineer"/"staff
+    # software" version was letting "Staff Data Analyst"/"Staff Data
+    # Scientist" through -- 11/50 real digest slots.
+    assert title_exclude_hit("Staff Analyst", REAL_FILTERS) == "staff"
+    assert matches_title("Staff Data Analyst", REAL_FILTERS) is False
+    assert matches_title("Staff Data Scientist", REAL_FILTERS) is False
+
+
+def test_associate_still_absent_from_includes_against_real_filters_yml():
+    # Re-confirms a prior fix rather than re-doing it -- "associate" was
+    # already removed from title_include_keywords, this just guards it.
+    assert "associate" not in REAL_FILTERS.title_include_keywords
+    assert title_include_match("Business Development Associate", REAL_FILTERS) is False
+
+
+# --- engineering sub-role excludes: specific phrases, not bare "engineer" --
+
+
+def test_engineering_subrole_phrases_excluded_against_real_filters_yml():
+    # The exact two real postings that motivated this: leaked in via domain
+    # words unrelated to the actual role.
+    assert matches_title("Backend Engineer, Payments and Risk", REAL_FILTERS) is False
+    assert matches_title(
+        "Software Engineer, Reconciliation & Reporting", REAL_FILTERS
+    ) is False
+    assert title_exclude_hit("Frontend Engineer", REAL_FILTERS) == "frontend"
+    assert title_exclude_hit("Full Stack Engineer", REAL_FILTERS) == "full stack"
+    assert title_exclude_hit("Android Engineer", REAL_FILTERS) == "android"
+    assert title_exclude_hit("iOS Engineer", REAL_FILTERS) == "ios"
+    assert title_exclude_hit("Security Engineer, Compliance", REAL_FILTERS) == "security engineer"
+
+
+def test_data_engineer_survives_the_new_engineering_subrole_excludes():
+    # The specific thing to confirm before adding "software engineer" and
+    # "backend engineer" to excludes: they're specific enough as PHRASES
+    # that neither is a substring of "data engineer", unlike bare "engineer"
+    # (see the collision tests above). Explicitly checked, not just assumed.
+    assert matches_title("Data Engineer", REAL_FILTERS) is True
+    assert matches_title("Backend Data Engineer", REAL_FILTERS) is True
+    assert matches_title("Data Engineer, Backend Systems", REAL_FILTERS) is True
+    assert title_exclude_hit("Data Engineer", REAL_FILTERS) is None

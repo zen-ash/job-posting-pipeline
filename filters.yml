@@ -83,12 +83,17 @@ title_include_keywords:
 title_exclude_keywords:
   - senior
   - sr
-  # "staff" alone excluded too much -- "Staff Analyst" is an ENTRY-LEVEL title
-  # at universities and government agencies (both on the target list), and a
-  # bare "staff" exclude was silently killing exactly those postings. Narrowed
-  # to the specific senior-track phrases that were actually meant.
-  - staff engineer
-  - staff software
+  # Bare "staff" is back. It was narrowed to "staff engineer"/"staff
+  # software" on the theory that "Staff Analyst" is an entry-level title at
+  # universities and government agencies -- true in general, but moot here:
+  # there are currently zero universities or agencies in companies.yml. At
+  # the actual companies on the list (tech-adjacent fintechs), Staff ranks
+  # ABOVE Senior, and the narrowed version was costing 11/50 digest slots to
+  # titles like "Staff Data Analyst" and "Staff Data Scientist". If a Workday
+  # adapter gets built for a university/agency (e.g. Emory, GSU) later, this
+  # should become source-gated (excluded for Greenhouse/Lever/Ashby, allowed
+  # for Workday) rather than reverting globally.
+  - staff
   - principal
   - lead
   - manager
@@ -110,14 +115,29 @@ title_exclude_keywords:
   # a team literally called "Risk" (e.g. "Backend Engineer, Payments and
   # Risk") matches the "risk" include even though the role itself has nothing
   # to do with risk analysis. This generalizes better than narrowing "risk"
-  # itself. Deliberately does NOT include "engineer" or "scientist" -- both
-  # collide with existing include phrases ("data engineer", "data scientist")
-  # and, since the exclude check runs independently of which include keyword
-  # actually fired, would silently kill those two core target titles too.
-  # Verified explicitly before deciding this: with "engineer"/"scientist" in
-  # this list, both "Data Engineer" and "Data Scientist" test as excluded.
+  # itself. Deliberately does NOT include bare "engineer" or "scientist" --
+  # both collide with existing include phrases ("data engineer", "data
+  # scientist") and, since the exclude check runs independently of which
+  # include keyword actually fired, would silently kill those two core
+  # target titles too. Verified explicitly: with bare "engineer"/"scientist"
+  # in this list, both "Data Engineer" and "Data Scientist" test as excluded.
   - designer
   - developer
+
+  # More department-name collisions, same shape as above -- these are
+  # specific enough as PHRASES that none of them match "data engineer" (e.g.
+  # "software engineer" doesn't appear as a substring of "data engineer"),
+  # so they're safe in a way bare "engineer" isn't. Found via the real
+  # 50-posting digest: "Backend Engineer, Payments and Risk" matched "risk",
+  # "Software Engineer, Reconciliation & Reporting" matched "reporting".
+  # Verified explicitly: "Data Engineer" still matches with these added.
+  - software engineer
+  - backend engineer
+  - frontend
+  - full stack
+  - android
+  - ios
+  - security engineer
 
   # seniority-tier suffixes. "ii" is deliberately NOT here -- "Analyst II" is
   # entry-level-adjacent at the employers this is targeting. iii/iv read as
