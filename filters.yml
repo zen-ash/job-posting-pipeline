@@ -68,10 +68,17 @@ title_include_keywords:
   # early-career signals
   - intern
   - internship
-  - associate
+  # "associate" (bare) removed -- it's a generic entry-level title suffix used
+  # across every department (sales, BD, private equity, collections), not a
+  # domain signal. Confirmed against real data: it accounted for 70/153
+  # (46%) of all matches, nearly all false positives ("Business Development
+  # Associate", "Fraud Operations Associate"). A genuinely relevant title
+  # like "Risk Associate" or "Compliance Associate" already matches on the
+  # domain word ("risk"/"compliance") without needing "associate" at all, so
+  # dropping it costs nothing on recall.
   - entry level
   - new grad
-  - university  
+  - university
 
 title_exclude_keywords:
   - senior
@@ -98,6 +105,19 @@ title_exclude_keywords:
   - counsel
   - attorney
   - paralegal
+
+  # department-name collisions: an engineer or designer who happens to sit on
+  # a team literally called "Risk" (e.g. "Backend Engineer, Payments and
+  # Risk") matches the "risk" include even though the role itself has nothing
+  # to do with risk analysis. This generalizes better than narrowing "risk"
+  # itself. Deliberately does NOT include "engineer" or "scientist" -- both
+  # collide with existing include phrases ("data engineer", "data scientist")
+  # and, since the exclude check runs independently of which include keyword
+  # actually fired, would silently kill those two core target titles too.
+  # Verified explicitly before deciding this: with "engineer"/"scientist" in
+  # this list, both "Data Engineer" and "Data Scientist" test as excluded.
+  - designer
+  - developer
 
   # seniority-tier suffixes. "ii" is deliberately NOT here -- "Analyst II" is
   # entry-level-adjacent at the employers this is targeting. iii/iv read as

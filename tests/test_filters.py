@@ -436,3 +436,66 @@ def test_staff_engineer_and_staff_software_still_excluded_against_real_filters_y
     # And with a real include keyword present too, the exclude still wins
     # end-to-end through matches_title, same as any other exclude.
     assert matches_title("Staff Software Analyst", REAL_FILTERS) is False
+
+
+# --- bare "associate" removed from includes ---------------------------------
+
+
+def test_bare_associate_no_longer_matches_against_real_filters_yml():
+    # Confirmed against real data before removing: 70/153 (46%) of all
+    # matches were "associate" alone, almost entirely false positives.
+    assert title_include_match("Business Development Associate", REAL_FILTERS) is False
+    assert title_include_match("Fraud Operations Associate", REAL_FILTERS) is False
+    assert title_include_match("Private Equity Partnerships Associate", REAL_FILTERS) is False
+
+
+def test_domain_associate_titles_still_match_via_the_domain_word():
+    # The whole point of removing bare "associate": a genuinely relevant title
+    # already matches on its domain word without needing "associate" at all.
+    assert matches_title("Risk Associate", REAL_FILTERS) is True
+    assert matches_title("Compliance Associate", REAL_FILTERS) is True
+
+
+# --- department-name collision excludes: designer/developer, NOT engineer/scientist --
+
+
+def test_designer_and_developer_excluded_against_real_filters_yml():
+    # No "senior" here on purpose -- title_exclude_hit returns the FIRST
+    # matching keyword in list order, and "senior" comes before "designer".
+    assert title_exclude_hit("Product Designer", REAL_FILTERS) == "designer"
+    assert title_exclude_hit("Backend Developer", REAL_FILTERS) == "developer"
+
+
+def test_engineer_and_scientist_deliberately_not_in_title_excludes():
+    # Guards the design decision itself, not just its consequence below --
+    # if someone adds "engineer" or "scientist" back to title_exclude_keywords
+    # without reading the comment explaining why not, this fails loudly.
+    assert "engineer" not in REAL_FILTERS.title_exclude_keywords
+    assert "scientist" not in REAL_FILTERS.title_exclude_keywords
+
+
+def test_data_engineer_and_data_scientist_would_break_if_engineer_and_scientist_were_excluded():
+    # The actual collision, proven directly: exclude checking runs
+    # independently of which include keyword fired, so a bare "engineer" or
+    # "scientist" exclude would kill "Data Engineer"/"Data Scientist" even
+    # though those exact phrases are in title_include_keywords. This is why
+    # they're deliberately absent from the real config (previous test) --
+    # this test proves what WOULD happen if they were added, so the reasoning
+    # stays verifiable rather than just asserted in a comment.
+    filters = Filters(
+        title_include_keywords=("data engineer", "data scientist"),
+        title_exclude_keywords=("engineer", "scientist"),
+        location_include_keywords=(),
+    )
+    assert title_include_match("Data Engineer", filters) is True
+    assert matches_title("Data Engineer", filters) is False  # would be a false exclude
+
+    assert title_include_match("Data Scientist", filters) is True
+    assert matches_title("Data Scientist", filters) is False  # would be a false exclude
+
+
+def test_data_engineer_and_data_scientist_actually_still_match_real_filters_yml():
+    # The real config (designer/developer only, not engineer/scientist)
+    # doesn't have the problem the test above demonstrates.
+    assert matches_title("Data Engineer", REAL_FILTERS) is True
+    assert matches_title("Data Scientist", REAL_FILTERS) is True
