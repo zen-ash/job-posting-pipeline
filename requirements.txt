@@ -1,0 +1,6 @@
+# Runtime dependencies for the ingestion pipeline.
+requests>=2.32,<3
+PyYAML>=6.0,<7
+psycopg[binary]>=3.2,<4
+python-dotenv>=1.0,<2
+resend>=2.0,<3

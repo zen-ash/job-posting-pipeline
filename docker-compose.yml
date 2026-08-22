@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: job_ingest_postgres
+    environment:
+      POSTGRES_USER: job_ingest
+      POSTGRES_PASSWORD: job_ingest
+      POSTGRES_DB: job_ingest
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U job_ingest -d job_ingest"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

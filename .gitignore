@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environment
+.venv/
+venv/
+
+# Environment secrets
+.env
+
+# Editors / OS
+.DS_Store
+.vscode/
+
+# Local Postgres data (docker-compose volume is named, but ignore just in case)
+pgdata/
+
+# Test / lint artifacts
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
