@@ -5,8 +5,13 @@
 CREATE TABLE IF NOT EXISTS companies (
     slug         TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
-    ats          TEXT NOT NULL CHECK (ats IN ('greenhouse', 'lever', 'ashby')),
-    board_token  TEXT NOT NULL,
+    ats          TEXT NOT NULL CHECK (ats IN ('greenhouse', 'lever', 'ashby', 'workday')),
+    -- NULL for workday, which is addressed by the tenant/wd_host/site triple
+    -- below instead of a single token.
+    board_token  TEXT,
+    tenant       TEXT,
+    wd_host      TEXT,
+    site         TEXT,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -31,6 +36,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- FULL untruncated text fetched each run, so truncation never hides an edit.
     -- `url` always points at the full posting.
     description         TEXT,
+    -- ISO alpha-2 country code, only when the source states it structurally
+    -- (Workday's country.alpha2Code). NULL for Greenhouse/Lever/Ashby, which
+    -- have no equivalent, and NULL for Workday rows that were stored
+    -- list-only. Used by the location filter in preference to string-matching
+    -- the free-text location when present -- see job_ingest/filters.py.
+    country_code        TEXT,
     content_hash         TEXT NOT NULL,
     first_seen_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -94,6 +105,19 @@ CREATE TABLE IF NOT EXISTS runs (
 -- below (for a database — like the local docker-compose one — that already
 -- existed before the column was added). Both run every time via ensure_schema()
 -- and are no-ops once applied.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS country_code TEXT;
+
+-- Widening a CHECK constraint needs an explicit drop/re-add: unlike a new
+-- column, CREATE TABLE IF NOT EXISTS above will NOT update the constraint on a
+-- database that already exists, so adding 'workday' to the list up there alone
+-- would still reject workday rows anywhere the table was created earlier.
+ALTER TABLE companies ALTER COLUMN board_token DROP NOT NULL;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS tenant TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS wd_host TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS site TEXT;
+ALTER TABLE companies DROP CONSTRAINT IF EXISTS companies_ats_check;
+ALTER TABLE companies ADD CONSTRAINT companies_ats_check
+    CHECK (ats IN ('greenhouse', 'lever', 'ashby', 'workday'));
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_pending_total INT NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_matched_total INT NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS digest_sent BOOLEAN NOT NULL DEFAULT false;

@@ -58,6 +58,10 @@ class PendingPosting:
     location: str | None
     url: str
     first_seen_at: datetime
+    # Structured country from the source, when it gave one (Workday only
+    # today). Preferred over string-matching `location` -- see
+    # job_ingest/filters.matches_location.
+    country_code: str | None = None
 
 
 @dataclass
@@ -98,7 +102,7 @@ def fetch_pending_postings(
         cur.execute(
             """
             SELECT j.source, j.company_slug, j.external_id, c.name, j.title,
-                   j.location, j.url, j.first_seen_at
+                   j.location, j.url, j.first_seen_at, j.country_code
             FROM jobs j
             JOIN companies c ON c.slug = j.company_slug
             WHERE j.notified_at IS NULL AND j.closed_at IS NULL
@@ -141,7 +145,7 @@ def apply_filters(
             title_excluded_counts[exclude_hit] += 1
             continue
 
-        if filters_module.matches_location(p.location, filters):
+        if filters_module.matches_location(p.location, filters, p.country_code):
             matched.append(p)
         else:
             location_excluded_counts[p.location or "(no location given)"] += 1

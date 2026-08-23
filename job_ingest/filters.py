@@ -114,7 +114,33 @@ def matches_title(title: str, filters: Filters) -> bool:
     return title_exclude_hit(title, filters) is None
 
 
-def matches_location(location: str | None, filters: Filters) -> bool:
+# ISO alpha-2 codes treated as "US-based" when a source states the country
+# structurally. Only "US" today; kept as a set so US territories could be
+# added without touching the matching logic.
+US_COUNTRY_CODES = frozenset({"US"})
+
+
+def matches_location(
+    location: str | None, filters: Filters, country_code: str | None = None
+) -> bool:
+    """True if the posting looks US-based.
+
+    When `country_code` is present the answer comes from it alone -- a
+    structured country from the source is strictly better evidence than
+    string-matching a free-text location, and it is also authoritative in the
+    negative: a posting Workday says is in India is in India, regardless of
+    what its `locationsText` happens to spell. Only Workday supplies this
+    today, and only for postings that were enriched via its job-detail
+    endpoint (see job_ingest/ats/workday.py).
+
+    Everything else -- Greenhouse/Lever/Ashby, and Workday rows stored
+    list-only -- falls back to the unchanged keyword/state-code matching
+    below. Workday's free-text location is notably poor for this ("2
+    Locations", "ATLANTA FDC/BDC - 5865"), which is exactly why the enriched
+    path exists.
+    """
+    if country_code:
+        return country_code.strip().upper() in US_COUNTRY_CODES
     if not location:
         return False
     if _contains_any(location, filters.location_include_keywords):
@@ -122,5 +148,9 @@ def matches_location(location: str | None, filters: Filters) -> bool:
     return _contains_state_code(location, filters.location_include_state_codes)
 
 
-def matches(title: str, location: str | None, filters: Filters) -> bool:
-    return matches_title(title, filters) and matches_location(location, filters)
+def matches(
+    title: str, location: str | None, filters: Filters, country_code: str | None = None
+) -> bool:
+    return matches_title(title, filters) and matches_location(
+        location, filters, country_code
+    )

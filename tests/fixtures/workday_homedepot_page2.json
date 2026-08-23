@@ -1,0 +1,23 @@
+{
+  "total": 0,
+  "jobPostings": [
+    {
+      "title": "Assistant Store Manager In Training",
+      "externalPath": "/job/GRAFTON-STORE---4919/Assistant-Store-Manager-In-Training_Req128516",
+      "locationsText": "GRAFTON STORE - 4919",
+      "postedOn": "Posted 30+ Days Ago",
+      "bulletFields": [
+        "Req128516"
+      ]
+    },
+    {
+      "title": "Store Manager",
+      "externalPath": "/job/SAVANNAH-STORE---0122/Store-Manager_Req128707",
+      "locationsText": "SAVANNAH STORE - 0122",
+      "postedOn": "Posted 30+ Days Ago",
+      "bulletFields": [
+        "Req128707"
+      ]
+    }
+  ]
+}

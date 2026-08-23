@@ -1,0 +1,57 @@
+{
+  "total": 1020,
+  "jobPostings": [
+    {
+      "title": "Lead Data Scientist",
+      "externalPath": "/job/STORE-SUPPORT-CENTER-ATLANTA---9090/Lead-Data-Scientist_Req184175-1",
+      "locationsText": "STORE SUPPORT CENTER, ATLANTA - 9090",
+      "postedOn": "Posted 2 Days Ago",
+      "bulletFields": [
+        "Req184175"
+      ]
+    },
+    {
+      "title": "Field Support Manager Inspections - Mid Atlantic/South Atlantic",
+      "externalPath": "/job/NORTH-CAROLINA---VIRTUAL---NC01/Field-Support-Manager-Inspections---Mid-Atlantic-South-Atlantic_Req191141",
+      "locationsText": "9 Locations",
+      "postedOn": "Posted 2 Days Ago",
+      "bulletFields": [
+        "Req191141"
+      ]
+    },
+    {
+      "title": "Field Support Manager Inspections - Southeast / South FL",
+      "externalPath": "/job/FLORIDA---VIRTUAL---FL01/Field-Support-Manager-Inspections---Southeast---South-FL_Req191139",
+      "locationsText": "5 Locations",
+      "postedOn": "Posted 2 Days Ago",
+      "bulletFields": [
+        "Req191139"
+      ]
+    },
+    {
+      "title": "Robotics Automation Mechanical Engineer",
+      "externalPath": "/job/Robotics-Automation-Mechanical-Engineer_Req186507",
+      "postedOn": "Posted 27 Days Ago",
+      "bulletFields": [
+        "Req186507"
+      ]
+    },
+    {
+      "title": "Fixture-Only Edge Case: Aggregated Location",
+      "externalPath": "/job/Fixture-Aggregated_Req999001",
+      "locationsText": "3 Locations",
+      "postedOn": "Posted 1 Day Ago",
+      "bulletFields": [
+        "Req999001"
+      ]
+    },
+    {
+      "title": "Fixture-Only Edge Case: No BulletFields",
+      "externalPath": "/job/Fixture-No-Bullets_Req999002",
+      "locationsText": "ATLANTA - 9090",
+      "postedOn": "Posted 5 Days Ago",
+      "bulletFields": []
+    }
+  ],
+  "userAuthenticated": false
+}

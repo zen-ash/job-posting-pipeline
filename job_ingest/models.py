@@ -30,6 +30,13 @@ class Posting:
     # Raw text/HTML used only as hashing input to detect edits to an existing
     # posting; not rendered anywhere itself.
     description: str
+    # ISO alpha-2 country code, when the source states it structurally rather
+    # than leaving it buried in a free-text location string. Only Workday
+    # supplies this today (country.alpha2Code on its job-detail response);
+    # Greenhouse/Lever/Ashby have no equivalent field, so it stays None for
+    # them and their location filtering is unchanged. Defaulted so adding it
+    # required no edits to the other three fetchers.
+    country_code: str | None = None
 
 
 def posting_content_hash(posting: Posting) -> str:
@@ -38,6 +45,11 @@ def posting_content_hash(posting: Posting) -> str:
     how the DB layer (step 3) tells "unchanged, just seen again" apart from
     "this existing posting was edited".
     """
+    # country_code is deliberately NOT part of the hash. Enrichment already
+    # changes `description` (None -> real text), so a list-only row becoming
+    # enriched is detected regardless; including country here would instead
+    # change the hash of every already-stored row on first deploy and report
+    # the entire table as "updated" for no informational gain.
     normalized = "\x1f".join(
         [
             posting.title.strip(),

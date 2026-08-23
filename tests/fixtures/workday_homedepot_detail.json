@@ -1,0 +1,28 @@
+{
+  "jobPostingInfo": {
+    "id": "723357063f921014693650e050de0000",
+    "title": "Lead Data Scientist",
+    "location": "STORE SUPPORT CENTER, ATLANTA - 9090",
+    "postedOn": "Posted 2 Days Ago",
+    "startDate": "2026-08-21",
+    "timeType": "Full time",
+    "jobReqId": "Req184175",
+    "jobPostingId": "Lead-Data-Scientist_Req184175-1",
+    "country": {
+      "descriptor": "United States of America",
+      "id": "bc33aa3152ec42d4995f4791a106ed09"
+    },
+    "jobRequisitionLocation": {
+      "descriptor": "STORE SUPPORT CENTER, ATLANTA - 9090",
+      "country": {
+        "descriptor": "United States of America",
+        "id": "bc33aa3152ec42d4995f4791a106ed09",
+        "alpha2Code": "US"
+      }
+    },
+    "remoteType": "Onsite",
+    "externalUrl": "https://homedepot.wd5.myworkdayjobs.com/CareerDepot/job/STORE-SUPPORT-CENTER-ATLANTA---9090/Lead-Data-Scientist_Req184175-1",
+    "jobDescription": "<p><span class=\"emphasis\">With a career at The Home Depot, you can be yourself and also be part of something bigger.</span></p><p></p><b>Position Purpose:</b><p>The Lead Data Scientist is responsible for leading data science initiatives that drive business profitability, increased efficiencies and i \u2026[trimmed for fixture]"
+  },
+  "userAuthenticated": false
+}

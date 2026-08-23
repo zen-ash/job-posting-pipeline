@@ -18,16 +18,32 @@ import requests
 from dotenv import load_dotenv
 
 from job_ingest import db, digest
-from job_ingest.ats import FETCHERS
+from job_ingest.ats import fetch_postings
 from job_ingest.config import Company, load_companies
+from job_ingest.filters import Filters, load_filters
 from job_ingest.http import BETWEEN_BOARDS_DELAY_SECONDS
 from job_ingest.models import Posting
 
 
-def fetch_company(company: Company) -> list[Posting]:
-    fetcher = FETCHERS[company.ats]
-    raw = fetcher.fetch(company.board_token)
-    return fetcher.normalize(raw, company)
+def fetch_company(company: Company, filters: Filters | None = None) -> list[Posting]:
+    """`filters` is used only by Workday, to decide which postings justify a
+    second detail request (see job_ingest/ats/workday.py). It is a cost
+    optimisation inside the fetch, never a substitute for the digest's own
+    independent filtering.
+    """
+    return fetch_postings(company, filters=filters)
+
+
+def _load_filters_or_none(path: str) -> Filters | None:
+    """Filters are only needed by Workday's fetch-time optimisation. A missing
+    filters.yml shouldn't stop a run that has no Workday companies in it, so
+    this degrades to None (Workday then stores every posting list-only) rather
+    than raising.
+    """
+    try:
+        return load_filters(path)
+    except (OSError, ValueError):
+        return None
 
 
 def compute_run_status(companies_total: int, companies_failed: int) -> str:
@@ -49,9 +65,10 @@ def run_single_company(args: argparse.Namespace) -> int:
         return 1
 
     company = companies[args.company]
-    postings = fetch_company(company)
+    postings = fetch_company(company, _load_filters_or_none(args.filters_file))
 
-    header = f"{company.name} ({company.ats}, board_token={company.board_token})"
+    board_id = company.board_token or f"{company.tenant}/{company.wd_host}/{company.site}"
+    header = f"{company.name} ({company.ats}, {board_id})"
     print(f"{header}: {len(postings)} postings\n")
     for p in postings[:10]:
         print(f"  [{p.external_id}] {p.title}")
@@ -66,6 +83,10 @@ def run_single_company(args: argparse.Namespace) -> int:
 def run_full_ingest(args: argparse.Namespace) -> int:
     """Full run: every company in companies.yml, upserted into Postgres."""
     companies = load_companies(args.companies_file)
+    # Loaded once here and handed to each fetch. Only Workday uses it, to skip
+    # detail requests for postings whose title can't pass anyway; the digest
+    # re-loads and re-applies the full filter itself over what got stored.
+    filters = _load_filters_or_none(args.filters_file)
     started_at = datetime.now(UTC)
 
     conn = db.get_connection()
@@ -80,7 +101,7 @@ def run_full_ingest(args: argparse.Namespace) -> int:
         for i, company in enumerate(companies):
             print(f"[{company.slug}] fetching ({company.ats})...")
             try:
-                postings = fetch_company(company)
+                postings = fetch_company(company, filters)
             except requests.RequestException as exc:
                 message = str(exc)
                 print(f"[{company.slug}] FAILED: {message}", file=sys.stderr)
@@ -212,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--company", help="fetch+print only this slug from companies.yml, no DB")
     parser.add_argument("--companies-file", default="companies.yml")
+    parser.add_argument("--filters-file", default="filters.yml")
     parser.add_argument(
         "--skip-digest",
         action="store_true",

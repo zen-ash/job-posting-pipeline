@@ -533,3 +533,34 @@ def test_data_engineer_survives_the_new_engineering_subrole_excludes():
     assert matches_title("Backend Data Engineer", REAL_FILTERS) is True
     assert matches_title("Data Engineer, Backend Systems", REAL_FILTERS) is True
     assert title_exclude_hit("Data Engineer", REAL_FILTERS) is None
+
+
+# --- structured country code (Workday) --------------------------------------
+
+
+def test_country_code_us_passes_regardless_of_unusable_location_string():
+    # The whole point of the enriched path: these are real Workday location
+    # strings that the keyword/state-code matching cannot rescue.
+    for loc in ["2 Locations", "ATLANTA FDC/BDC - 5865", "CW-HIS HQ - 9659", None]:
+        assert matches_location(loc, REAL_FILTERS) is False, loc
+        assert matches_location(loc, REAL_FILTERS, country_code="US") is True, loc
+
+
+def test_country_code_non_us_is_authoritative_over_a_misleading_location():
+    # "Bangalore, GA" would pass the ", GA" state-code rule on string matching
+    # alone; a structured IN country must override that.
+    assert matches_location("Bangalore, GA", REAL_FILTERS) is True
+    assert matches_location("Bangalore, GA", REAL_FILTERS, country_code="IN") is False
+
+
+def test_country_code_is_case_and_whitespace_insensitive():
+    assert matches_location("2 Locations", REAL_FILTERS, country_code="us") is True
+    assert matches_location("2 Locations", REAL_FILTERS, country_code=" US ") is True
+
+
+def test_absent_country_code_falls_back_to_string_matching():
+    # None/empty must fall through to the existing behaviour, not be read as
+    # "not US" -- that's what keeps Greenhouse/Lever/Ashby unchanged.
+    assert matches_location("Romeoville, IL", REAL_FILTERS, country_code=None) is True
+    assert matches_location("Romeoville, IL", REAL_FILTERS, country_code="") is True
+    assert matches_location("Remote, Germany", REAL_FILTERS, country_code=None) is False

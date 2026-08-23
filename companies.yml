@@ -123,3 +123,105 @@ companies:
     name: Komodo Health
     ats: greenhouse
     board_token: komodohealth
+
+  # --- Workday (ats: workday) ------------------------------------------------
+  #
+  # Addressed by tenant/wd_host/site instead of board_token. All 12 below were
+  # verified against the live endpoint before being added -- every one returned
+  # HTTP 200 with a populated `total`, including citi's site value of "2",
+  # which looked wrong but is real (total=2000).
+  #
+  # Two things to know about this source (see job_ingest/ats/workday.py):
+  #  - external_id is the posting's externalPath, NOT bulletFields. That field
+  #    is tenant-configurable: on worldpay it's [location, reqId], so
+  #    bulletFields[0] is a city shared across postings and would collide.
+  #  - Only postings whose title already passes filters.yml get a second
+  #    (detail) request; everything else is stored list-only, without a
+  #    description, country_code, or source_updated_at.
+
+  - slug: equifax
+    name: Equifax
+    ats: workday
+    tenant: equifax
+    wd_host: wd5
+    site: External
+
+  - slug: morganstanley
+    name: Morgan Stanley
+    ats: workday
+    tenant: ms
+    wd_host: wd5
+    site: External
+
+  - slug: fiserv
+    name: Fiserv
+    ats: workday
+    tenant: fiserv
+    wd_host: wd5
+    site: EXT
+
+  - slug: ncrvoyix
+    name: NCR Voyix
+    ats: workday
+    tenant: ncr
+    wd_host: wd1
+    site: ext_us
+
+  - slug: pwc-campus
+    name: PwC (Campus)
+    ats: workday
+    tenant: pwc
+    wd_host: wd3
+    site: Global_Campus_Careers
+
+  - slug: pwc-exp
+    name: PwC (Experienced)
+    ats: workday
+    tenant: pwc
+    wd_host: wd3
+    site: US_Experienced_Careers
+
+  - slug: citi
+    name: Citi
+    ats: workday
+    tenant: citi
+    wd_host: wd5
+    site: "2" # quoted: YAML would otherwise load this as the integer 2
+    # total came back as exactly 2000, a suspiciously round number -- likely a
+    # server-side cap rather than the true open-requisition count, so this
+    # board may be silently truncated. Worth revisiting if it matters.
+
+  - slug: homedepot
+    name: Home Depot
+    ats: workday
+    tenant: homedepot
+    wd_host: wd5
+    site: CareerDepot
+
+  - slug: truist
+    name: Truist
+    ats: workday
+    tenant: truist
+    wd_host: wd1
+    site: Careers
+
+  - slug: fis
+    name: FIS
+    ats: workday
+    tenant: fis
+    wd_host: wd5
+    site: SearchJobs
+
+  - slug: globalpayments
+    name: Global Payments
+    ats: workday
+    tenant: tsys
+    wd_host: wd1
+    site: TSYS
+
+  - slug: gp-worldpay
+    name: Worldpay
+    ats: workday
+    tenant: worldpay
+    wd_host: wd5
+    site: Worldpay_External_Careers_Site

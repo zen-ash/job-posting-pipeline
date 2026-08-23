@@ -67,15 +67,18 @@ def sync_companies(conn: psycopg.Connection, companies: list[Company]) -> None:
         for c in companies:
             cur.execute(
                 """
-                INSERT INTO companies (slug, name, ats, board_token)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO companies (slug, name, ats, board_token, tenant, wd_host, site)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (slug) DO UPDATE
                 SET name = EXCLUDED.name,
                     ats = EXCLUDED.ats,
                     board_token = EXCLUDED.board_token,
+                    tenant = EXCLUDED.tenant,
+                    wd_host = EXCLUDED.wd_host,
+                    site = EXCLUDED.site,
                     updated_at = now()
                 """,
-                (c.slug, c.name, c.ats, c.board_token),
+                (c.slug, c.name, c.ats, c.board_token, c.tenant, c.wd_host, c.site),
             )
     conn.commit()
 
@@ -131,9 +134,9 @@ def sync_company_postings(
                     INSERT INTO jobs (
                         source, company_slug, external_id, title, location,
                         department, url, source_updated_at, description,
-                        content_hash, first_seen_at, last_seen_at
+                        country_code, content_hash, first_seen_at, last_seen_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), now())
                     """,
                     (
                         posting.source,
@@ -145,6 +148,7 @@ def sync_company_postings(
                         posting.url,
                         posting.source_updated_at,
                         stored_description,
+                        posting.country_code,
                         new_hash,
                     ),
                 )
@@ -169,6 +173,11 @@ def sync_company_postings(
                     url = %s,
                     source_updated_at = %s,
                     description = %s,
+                    -- COALESCE so a later list-only re-fetch of an
+                    -- already-enriched posting can't erase its country. New
+                    -- structured data overwrites; absent data leaves the
+                    -- stored value alone.
+                    country_code = COALESCE(%s, country_code),
                     content_hash = %s,
                     last_seen_at = now(),
                     closed_at = NULL,
@@ -186,6 +195,7 @@ def sync_company_postings(
                     posting.url,
                     posting.source_updated_at,
                     stored_description,
+                    posting.country_code,
                     new_hash,
                     reopened,
                     posting.source,
