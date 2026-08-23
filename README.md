@@ -11,8 +11,8 @@ Built as a personal job-search tool and a portfolio project.
 
 **Status:** live. Runs daily via GitHub Actions against a Neon Postgres database,
 polling 17 companies (fintech/payments and healthcare payers) across all three ATSs and
-seeing roughly 2,500 open postings per run. The most recent run narrowed those to 61
-matching the filters, of which the first 50 go out in the digest.
+seeing roughly 2,500 open postings in about 6m40s per run. The most recent run narrowed
+those to 61 matching the filters, of which the first 50 go out in the digest.
 
 ## How it works
 
