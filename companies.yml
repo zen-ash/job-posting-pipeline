@@ -167,12 +167,15 @@ companies:
     wd_host: wd1
     site: ext_us
 
-  - slug: pwc-campus
-    name: PwC (Campus)
-    ats: workday
-    tenant: pwc
-    wd_host: wd3
-    site: Global_Campus_Careers
+  # pwc-campus (pwc / wd3 / Global_Campus_Careers) was REMOVED -- do not
+  # re-add it. It resolves fine and returns ~1,550 postings, but it is the
+  # GLOBAL campus site, exactly as its name says: sampled locations were Lviv,
+  # Makati, and Bangkok, and it produced 0 US matches. Worse, ~530 of its
+  # postings passed the title filter (campus roles are full of "Analyst" and
+  # "Associate"), so each run spent ~530 detail requests -- roughly 6-7 minutes
+  # -- enriching postings that could never match on location. If a US-scoped
+  # PwC campus site is found later, add THAT instead; pwc-exp below is the
+  # US-experienced site and is kept.
 
   - slug: pwc-exp
     name: PwC (Experienced)

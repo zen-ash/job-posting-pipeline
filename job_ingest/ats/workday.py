@@ -52,6 +52,13 @@ DEFAULT_MAX_PAGES = 500
 # Politeness pause between detail requests, on top of the between-boards delay
 # the run loop already applies. Detail is the high-volume phase, so it gets its
 # own smaller delay rather than reusing the per-board one.
+#
+# Deliberately NOT tuned down. At ~1,300 detail requests per run this accounts
+# for a few minutes of wall clock, and dropping it to 0.05 would reclaim most
+# of that -- but these are unauthenticated public endpoints being polled by an
+# uninvited client, and nothing is waiting on the result of a nightly job.
+# Staying polite is worth more than the time. The workflow timeout was raised
+# to accommodate this rather than the reverse.
 DETAIL_DELAY_SECONDS = 0.2
 
 LIST_URL = "https://{tenant}.{wd_host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
