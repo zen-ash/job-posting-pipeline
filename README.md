@@ -9,9 +9,10 @@ filters for roles actually worth seeing, and emails a digest of what's genuinely
 
 Built as a personal job-search tool and a portfolio project.
 
-**Status:** live. Runs daily via GitHub Actions against a Neon Postgres database; the
-first production run ingested 424 postings across 5 companies in 35 seconds and correctly
-emailed a digest of the 2 that matched the filters.
+**Status:** live. Runs daily via GitHub Actions against a Neon Postgres database,
+polling 17 companies (fintech/payments and healthcare payers) across all three ATSs and
+seeing roughly 2,500 open postings per run. The most recent run narrowed those to 61
+matching the filters, of which the first 50 go out in the digest.
 
 ## How it works
 
@@ -114,23 +115,66 @@ The digest doesn't email every new posting — `filters.yml`, a plain config fil
 project root (not something baked into the code), narrows it to roles worth seeing:
 
 ```yaml
-title_include_keywords: [data analyst, analytics, business intelligence, ...]
-title_exclude_keywords: [senior, staff, principal, lead, manager, ...]
-location_include_keywords: [united states, usa, NY, CA, IL, ...]
+title_include_keywords:       [analyst, analytics, data engineer, audit, compliance, risk, ...]
+title_exclude_keywords:       [senior, sr, staff, manager, director, software engineer, ...]
+location_include_keywords:    [united states, usa, us, north america, georgia, texas, ...]
+location_include_state_codes: [AL, AK, AZ, ..., DC]
 ```
 
-A posting must match at least one include keyword in its title, none of the exclude
-keywords, and at least one location keyword. Matching is whole-word/phrase
-(`\bkeyword\b`), not plain substring — `"sql"` doesn't match inside `"MySQL"`, `"us"`
-doesn't match inside `"Russia"` or `"Australia"`. This is deliberately simple keyword
-matching, not the LLM-based relevance scoring planned for later (see "What's next") —
-see [job_ingest/filters.py](job_ingest/filters.py).
+A posting must match at least one `title_include_keywords` entry, none of
+`title_exclude_keywords`, and at least one entry from *either* location list. Exclude
+beats include: a title matching both is excluded.
 
-Every run prints the full funnel (`"X new postings, Y matched filters"`) and, for
-postings that passed the title filter but failed on location, a breakdown by raw
-location string — the tuning signal for `location_include_keywords`, since ATS location
-fields are messy multi-value strings (`"Remote, Canada; Remote, United States"`) or bare
-`"City, ST"` with no country at all.
+### How matching works
+
+Case-insensitive, period-stripped, and whole-word/phrase:
+
+- **Whole-word, not substring** — `"sql"` doesn't match inside `"MySQL"`, and `"us"`
+  doesn't match inside `"Russia"` or `"Australia"`.
+- **Period-stripped on both sides**, so `"U.S."` matches the `us` entry and `"Sr."`
+  matches `sr`, with no separate punctuated entry needed for either.
+- Implemented as `(?<!\w)keyword(?!\w)`, not `\bkeyword\b`. `\b` requires a
+  word/non-word transition, which a keyword *ending* in punctuation doesn't have when
+  the next character is also non-word — so such entries silently never match at all.
+
+`location_include_state_codes` is the deliberate exception: matched **case-sensitively
+and only immediately after a comma** (`", GA"`). A permissive whole-word match on bare
+two-letter codes collides with ordinary English words a location string plausibly
+contains — `in`, `or`, `hi`, `me`, `de`. Spelled-out state names live in
+`location_include_keywords` and recover the recall that strictness gives up, catching
+`"Austin, Texas"` where the code form wouldn't appear.
+
+This is deliberately simple keyword matching, not the LLM-based relevance scoring
+planned for later (see "What's next") — see [job_ingest/filters.py](job_ingest/filters.py).
+
+### Tuning reports
+
+A filter is only as good as your ability to see what it threw away, so every run prints
+the funnel plus **two symmetric false-negative reports**, one per half of the filter:
+
+```
+preview (--skip-digest): 2718 new postings, 61 matched filters, 50 would be included
+  excluded by title (matched an include keyword, tune filters.yml):
+     67x  "senior"
+     32x  "staff"
+      6x  "software engineer"
+  excluded by location (passed title filter, tune filters.yml):
+      6x  Singapore
+      5x  Mexico City
+```
+
+- **By title** — postings that matched an include keyword but were then killed by an
+  exclude, grouped by *which exclude keyword fired*. Without this, excludes are
+  invisible: an over-broad one silently removes postings you never learn existed. This
+  report is what surfaced `staff` removing 11 wanted postings in one digest.
+- **By location** — postings that passed the title filter but failed on location,
+  grouped by raw location string, since ATS location fields are messy multi-value
+  strings (`"Remote, Canada; Remote, United States"`) or bare `"City, ST"` with no
+  country marker at all.
+
+A title matching no include keyword appears in neither report — there's nothing to tune
+from "didn't match anything." Run `python -m job_ingest.main --skip-digest` to see both
+reports without sending an email.
 
 Before the 50-posting cap, matched postings are **round-robined across companies**
 (alphabetical by slug, each company's own oldest-first order preserved), so one board
