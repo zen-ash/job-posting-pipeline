@@ -25,13 +25,22 @@ from job_ingest.http import BETWEEN_BOARDS_DELAY_SECONDS
 from job_ingest.models import Posting
 
 
-def fetch_company(company: Company, filters: Filters | None = None) -> list[Posting]:
-    """`filters` is used only by Workday, to decide which postings justify a
-    second detail request (see job_ingest/ats/workday.py). It is a cost
-    optimisation inside the fetch, never a substitute for the digest's own
-    independent filtering.
+def fetch_company(
+    company: Company,
+    filters: Filters | None = None,
+    already_enriched: set[str] | None = None,
+) -> list[Posting]:
+    """Both extra arguments are Workday-only and are cost optimisations inside
+    the fetch, never a substitute for the digest's own independent filtering:
+
+    - `filters` decides which postings justify a second (detail) request.
+    - `already_enriched` skips that request for postings whose body is already
+      stored.
+
+    They are passed in rather than looked up inside the fetcher so that
+    job_ingest/ats/* stays database-unaware and testable offline.
     """
-    return fetch_postings(company, filters=filters)
+    return fetch_postings(company, filters=filters, already_enriched=already_enriched)
 
 
 def _load_filters_or_none(path: str) -> Filters | None:
@@ -101,7 +110,14 @@ def run_full_ingest(args: argparse.Namespace) -> int:
         for i, company in enumerate(companies):
             print(f"[{company.slug}] fetching ({company.ats})...")
             try:
-                postings = fetch_company(company, filters)
+                # Only Workday has a second-phase request worth skipping; the
+                # other three would pay for a query whose result they ignore.
+                already_enriched = (
+                    db.enriched_external_ids(conn, company)
+                    if company.ats == "workday"
+                    else None
+                )
+                postings = fetch_company(company, filters, already_enriched)
             except requests.RequestException as exc:
                 message = str(exc)
                 print(f"[{company.slug}] FAILED: {message}", file=sys.stderr)

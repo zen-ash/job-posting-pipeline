@@ -35,11 +35,22 @@ def fetch_postings(
     session: requests.Session | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     filters: Filters | None = None,
+    already_enriched: set[str] | None = None,
 ) -> list[Posting]:
-    """Fetch and normalize one company's board, whichever ATS it is on."""
+    """Fetch and normalize one company's board, whichever ATS it is on.
+
+    `already_enriched` is Workday-only (see job_ingest/ats/workday.py) and is
+    ignored by the other three, which have no second-phase request to skip.
+    """
     module = FETCHERS[company.ats]
     if company.ats == "workday":
-        raw = module.fetch(company, session=session, timeout=timeout, filters=filters)
+        raw = module.fetch(
+            company,
+            session=session,
+            timeout=timeout,
+            filters=filters,
+            already_enriched=already_enriched,
+        )
     else:
         raw = module.fetch(company.board_token, session=session, timeout=timeout)
     return module.normalize(raw, company)

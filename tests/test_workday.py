@@ -292,3 +292,48 @@ def test_missing_workday_config_raises_clearly():
     bad = Company(slug="x", name="X", ats="workday", tenant="t")  # no wd_host/site
     with pytest.raises(ValueError, match="wd_host"):
         workday.fetch(bad, session=FakeWorkdaySession(total=1), filters=None)
+
+
+# --- skipping re-enrichment of postings already stored ----------------------
+
+
+def test_already_enriched_postings_are_not_refetched(monkeypatch):
+    monkeypatch.setattr(workday.time, "sleep", lambda s: None)
+    titles = ["Data Scientist", "Data Analyst"]
+    session = FakeEnrichSession(total=len(titles), titles=titles)
+
+    # /job/j0 is already stored; only /job/j1 should cost a request.
+    workday.fetch(HOMEDEPOT, session=session, filters=FILTERS,
+                  already_enriched={"/job/j0"})
+
+    assert len(session.detail_urls) == 1
+    assert session.detail_urls[0].endswith("/job/j1")
+
+
+def test_empty_already_enriched_set_enriches_everything(monkeypatch):
+    monkeypatch.setattr(workday.time, "sleep", lambda s: None)
+    titles = ["Data Scientist", "Data Analyst"]
+    session = FakeEnrichSession(total=len(titles), titles=titles)
+    workday.fetch(HOMEDEPOT, session=session, filters=FILTERS, already_enriched=set())
+    assert len(session.detail_urls) == 2
+
+
+def test_already_enriched_defaults_to_enriching_when_not_supplied(monkeypatch):
+    monkeypatch.setattr(workday.time, "sleep", lambda s: None)
+    session = FakeEnrichSession(total=1, titles=["Data Scientist"])
+    workday.fetch(HOMEDEPOT, session=session, filters=FILTERS)
+    assert len(session.detail_urls) == 1
+
+
+def test_skipping_uses_the_same_id_scheme_as_normalize(monkeypatch):
+    """The skip set is keyed on external_id, so it must be built from the same
+    field normalize() uses -- externalPath, not bulletFields."""
+    monkeypatch.setattr(workday.time, "sleep", lambda s: None)
+    session = FakeEnrichSession(total=1, titles=["Data Scientist"])
+    rows = workday.fetch(HOMEDEPOT, session=session, filters=FILTERS)
+    external_id = workday.normalize(rows, HOMEDEPOT)[0].external_id
+
+    session2 = FakeEnrichSession(total=1, titles=["Data Scientist"])
+    workday.fetch(HOMEDEPOT, session=session2, filters=FILTERS,
+                  already_enriched={external_id})
+    assert session2.detail_urls == []

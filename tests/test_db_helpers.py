@@ -5,8 +5,13 @@ from __future__ import annotations
 import pytest
 
 from job_ingest.config import ConfigError, load_companies
-from job_ingest.db import MAX_DESCRIPTION_CHARS, _truncate_description
+from job_ingest.db import (
+    MAX_DESCRIPTION_CHARS,
+    _resolve_against_stored,
+    _truncate_description,
+)
 from job_ingest.main import compute_run_status
+from job_ingest.models import Posting, posting_content_hash
 
 
 def test_truncate_description_leaves_short_text_untouched():
@@ -104,3 +109,106 @@ companies:
 """)
     with pytest.raises(ConfigError, match="board_token"):
         load_companies(path)
+
+
+# --- skipped-enrichment resolution (Workday "don't re-enrich") --------------
+#
+# row layout matches the SELECT in sync_company_postings:
+#   (content_hash, closed_at, title, location, department, description)
+
+
+def _posting(**over):
+    base = dict(
+        source="workday", company_slug="homedepot", external_id="/job/j1",
+        title="Data Analyst", location="Atlanta, GA", department=None,
+        url="https://example.com/j1", source_updated_at=None, description="",
+    )
+    base.update(over)
+    return Posting(**base)
+
+
+def _row(description="stored body", title="Data Analyst",
+         location="Atlanta, GA", department=None, content_hash="STOREDHASH"):
+    return (content_hash, None, title, location, department, description)
+
+
+def test_skipped_enrichment_keeps_stored_description_and_hash():
+    # Nothing changed and no new body was fetched -> the row must look
+    # untouched, not "updated", and must not lose its stored description.
+    h, desc, _loc = _resolve_against_stored(_posting(), _row())
+    assert desc == "stored body"
+    assert h == "STOREDHASH"
+
+
+def test_skipped_enrichment_still_detects_a_title_edit():
+    # Title arrives from the list response every run, so an edit must change
+    # the hash even though the body was never re-read.
+    h, desc, _loc = _resolve_against_stored(_posting(title="Lead Data Analyst"), _row())
+    assert desc == "stored body"
+    assert h != "STOREDHASH"
+
+
+def test_skipped_enrichment_still_detects_a_location_edit():
+    h, _, _loc = _resolve_against_stored(_posting(location="Austin, TX"), _row())
+    assert h != "STOREDHASH"
+
+
+def test_incoming_description_wins_when_present():
+    # A genuine re-enrichment (or a first enrichment) must overwrite.
+    h, desc, _loc = _resolve_against_stored(_posting(description="fresh body"), _row())
+    assert desc == "fresh body"
+    assert h == posting_content_hash(_posting(description="fresh body"))
+
+
+def test_empty_incoming_and_empty_stored_is_a_normal_list_only_row():
+    # Both empty -> nothing special; hash over the empty body as usual.
+    h, desc, _loc = _resolve_against_stored(_posting(), _row(description=""))
+    assert desc == ""
+    assert h == posting_content_hash(_posting())
+
+
+def test_stored_null_description_is_treated_as_empty():
+    h, desc, _loc = _resolve_against_stored(_posting(), _row(description=None))
+    assert desc == ""
+    assert h == posting_content_hash(_posting())
+
+
+def test_skipped_enrichment_is_stable_across_repeated_runs():
+    # The failure this guards: an empty incoming description overwriting the
+    # stored one would change the hash every night and flap the row forever.
+    row = _row()
+    h1, d1, _l1 = _resolve_against_stored(_posting(), row)
+    h2, d2, _l2 = _resolve_against_stored(_posting(), (h1, None, "Data Analyst",
+                                                       "Atlanta, GA", None, d1))
+    assert (h1, d1) == (h2, d2) == ("STOREDHASH", "stored body")
+
+
+def test_skipped_enrichment_does_not_downgrade_a_stored_location():
+    # The regression this guards, observed live: an already-enriched posting
+    # stored location "Raleigh, NC" from its detail payload. On the next run
+    # its detail was (correctly) skipped, the fetcher emitted the LIST value
+    # "2 Locations", and that placeholder overwrote the specific location --
+    # so the digest would show "2 Locations" to the reader. The fetcher now
+    # emits None for a skipped row, meaning "no new information".
+    h, desc, loc = _resolve_against_stored(
+        _posting(location=None), _row(location="Raleigh, NC")
+    )
+    assert loc == "Raleigh, NC"
+    assert desc == "stored body"
+    assert h == "STOREDHASH"  # and it must not read as an edit
+
+
+def test_none_location_is_kept_from_storage_even_on_a_fresh_enrichment():
+    h, desc, loc = _resolve_against_stored(
+        _posting(location=None, description="fresh body"), _row(location="Raleigh, NC")
+    )
+    assert loc == "Raleigh, NC"
+    assert desc == "fresh body"
+
+
+def test_a_real_list_location_edit_still_overwrites():
+    # None means "no info"; an actual string means the list reported a change.
+    _h, _desc, loc = _resolve_against_stored(
+        _posting(location="Austin, TX"), _row(location="Raleigh, NC")
+    )
+    assert loc == "Austin, TX"

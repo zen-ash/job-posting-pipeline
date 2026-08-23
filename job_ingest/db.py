@@ -14,7 +14,7 @@ Design notes (see also job_ingest/schema.sql):
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -83,11 +83,88 @@ def sync_companies(conn: psycopg.Connection, companies: list[Company]) -> None:
     conn.commit()
 
 
+def enriched_external_ids(conn: psycopg.Connection, company: Company) -> set[str]:
+    """external_ids for this company that already have a stored description.
+
+    Handed to the Workday fetcher so it can skip re-requesting job detail for
+    postings whose body we already have -- the difference between ~750 detail
+    requests a night and only the day's new arrivals. Returned as a plain set
+    so the fetcher itself never touches the database and stays offline-testable.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT external_id FROM jobs
+            WHERE source = %s AND company_slug = %s AND coalesce(description, '') <> ''
+            """,
+            (company.ats, company.slug),
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
 def _truncate_description(text: str) -> str:
     if len(text) <= MAX_DESCRIPTION_CHARS:
         return text
     keep = MAX_DESCRIPTION_CHARS - len(_TRUNCATION_SUFFIX)
     return text[:keep] + _TRUNCATION_SUFFIX
+
+
+def _resolve_against_stored(posting: Posting, row: tuple) -> tuple[str, str, str | None]:
+    """Returns (content_hash, description_to_store, location_to_store) for a
+    posting that already exists in the table.
+
+    Exists because of the Workday "don't re-enrich" optimisation: when a
+    posting's body was fetched on an earlier run, later runs deliberately skip
+    the detail request, so the incoming Posting arrives with description="".
+    Written naively that empty string would overwrite the stored description
+    and change the content_hash on every single run -- destroying the body text
+    and reporting the whole board as "updated" forever.
+
+    So an empty incoming description against a non-empty stored one means "no
+    new information about the body", not "the body is now empty":
+
+      - the stored description is kept, and
+      - the hash is recomputed against the STORED body, so a title or location
+        edit (both of which still arrive from the list response every run) is
+        still detected, while
+      - if the list-derived fields are unchanged too, the stored hash is
+        returned verbatim rather than recomputed. That last part matters: the
+        original hash was taken over the FULL body, but only the truncated body
+        was stored, so recomputing would produce a different hash and flag
+        every enriched row as updated exactly once for no real reason.
+
+    TRADEOFF, deliberate: description-body edits on Workday postings are no
+    longer detected, because the body is never re-read. Title and location
+    edits still are. Catching body edits would mean re-fetching every enriched
+    posting nightly -- ~750 requests to find the rare reworded paragraph --
+    which is the cost this whole change exists to remove. Revisit with a TTL
+    (re-enrich anything older than N days) if body edits ever start mattering.
+    """
+    stored_hash, _closed_at, s_title, s_location, s_department, s_description = row
+    stored_description = s_description or ""
+
+    # A None location means the fetcher learned nothing new this run (Workday
+    # skipped enrichment), NOT that the posting lost its location -- so keep
+    # what is stored rather than overwriting it with a worse value.
+    location = posting.location if posting.location is not None else s_location
+
+    if posting.description or not stored_description:
+        resolved = replace(posting, location=location)
+        return (
+            posting_content_hash(resolved),
+            _truncate_description(resolved.description),
+            location,
+        )
+
+    list_fields_changed = (posting.title, location, posting.department) != (
+        s_title,
+        s_location,
+        s_department,
+    )
+    if not list_fields_changed:
+        return stored_hash, stored_description, location
+    carried = replace(posting, description=stored_description, location=location)
+    return posting_content_hash(carried), stored_description, location
 
 
 @dataclass
@@ -116,17 +193,24 @@ def sync_company_postings(
 
     with conn.cursor() as cur:
         for posting in postings:
-            new_hash = posting_content_hash(posting)
-            stored_description = _truncate_description(posting.description)
-
             cur.execute(
                 """
-                SELECT content_hash, closed_at FROM jobs
+                SELECT content_hash, closed_at, title, location, department, description
+                FROM jobs
                 WHERE source = %s AND company_slug = %s AND external_id = %s
                 """,
                 (posting.source, posting.company_slug, posting.external_id),
             )
             row = cur.fetchone()
+
+            if row is not None:
+                new_hash, stored_description, resolved_location = _resolve_against_stored(
+                    posting, row
+                )
+            else:
+                new_hash = posting_content_hash(posting)
+                stored_description = _truncate_description(posting.description)
+                resolved_location = posting.location
 
             if row is None:
                 cur.execute(
@@ -155,7 +239,7 @@ def sync_company_postings(
                 stats.new += 1
                 continue
 
-            existing_hash, closed_at = row
+            existing_hash, closed_at = row[0], row[1]
             reopened = closed_at is not None
             if reopened:
                 stats.reopened += 1
@@ -190,7 +274,7 @@ def sync_company_postings(
                 """,
                 (
                     posting.title,
-                    posting.location,
+                    resolved_location,
                     posting.department,
                     posting.url,
                     posting.source_updated_at,

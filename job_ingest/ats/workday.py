@@ -91,6 +91,7 @@ def fetch(
     timeout: float = DEFAULT_TIMEOUT,
     filters: Filters | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
+    already_enriched: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Returns raw list rows, each optionally carrying an enriched detail
     payload under the "_detail" key (see `_enrich`).
@@ -139,7 +140,14 @@ def fetch(
             break
 
     if filters is not None:
-        _enrich(rows, company, session=session, timeout=timeout, filters=filters)
+        _enrich(
+            rows,
+            company,
+            session=session,
+            timeout=timeout,
+            filters=filters,
+            already_enriched=already_enriched or set(),
+        )
     return rows
 
 
@@ -150,6 +158,7 @@ def _enrich(
     session: requests.Session,
     timeout: float,
     filters: Filters,
+    already_enriched: set[str],
 ) -> None:
     """Fetch the detail payload for rows whose title already passes the filter,
     attaching it in place under "_detail".
@@ -159,16 +168,30 @@ def _enrich(
     purely a cost optimisation -- the digest still applies the complete filter
     independently over what got stored, and never trusts this pass.
 
-    CONSEQUENCE, deliberate and worth knowing: a posting whose title does not
-    pass at fetch time is stored LIST-ONLY -- no description, no country_code,
-    no source_updated_at. If filters.yml is later loosened so that posting
-    would now qualify, its stored row stays thin until something re-enriches
-    it. Its location will then be judged by the weak free-text path rather than
-    the structured country, so it may be filtered out on location even though
-    an enriched version of the same row would have passed. There is no backfill
-    yet; re-enrichment happens only if the posting is edited upstream such that
-    a later run re-fetches it. Building that backfill is deferred, not
-    overlooked.
+    `already_enriched` holds the external_ids whose bodies are already stored,
+    supplied by the caller from the database (see db.enriched_external_ids).
+    Skipping those is what keeps this affordable: without it every run re-reads
+    ~750 descriptions it already has, which measured at 19 of the 28 minutes a
+    full CI run took. With it, the detail phase costs only the day's new
+    title-matching postings. Cost becomes proportional to what is NEW rather
+    than to the size of the back catalogue, so adding an employer no longer
+    lengthens every subsequent night's run.
+
+    The set is passed in rather than queried here on purpose -- this module
+    never touches the database, so the whole fetcher stays testable offline
+    against fixtures.
+
+    CONSEQUENCE, deliberate: a posting whose title does not pass at fetch time
+    is stored LIST-ONLY -- no description, no country_code, no
+    source_updated_at -- and its location is then judged by the weak free-text
+    path rather than the structured country. Loosening filters.yml later now
+    self-heals, though: a list-only row has no stored description, so it is
+    absent from `already_enriched` and the next run enriches it.
+
+    Body edits on an already-enriched posting are NOT detected, since its
+    detail is never re-read. Title and location still come from the list
+    response on every run, so those edits are caught. See
+    db._resolve_skipped_enrichment for the other half of this decision.
     """
     for row in rows:
         title = (row.get("title") or "").strip()
@@ -176,6 +199,13 @@ def _enrich(
             continue
         path = row.get("externalPath")
         if not path:
+            continue
+        if _external_id(row) in already_enriched:
+            # Marked rather than merely skipped: normalize() must be able to
+            # tell "we chose not to re-read this" apart from "this posting was
+            # never enriched". They imply opposite things about the list's
+            # locationsText -- see normalize().
+            row["_skipped_enrichment"] = True
             continue
         detail_url = DETAIL_URL.format(
             tenant=company.tenant, wd_host=company.wd_host, site=company.site, path=path
@@ -270,8 +300,21 @@ def normalize(raw: list[dict[str, Any]], company: Company) -> list[Posting]:
         if not external_id:
             continue
         detail = row.get("_detail") or {}
-        location = detail.get("location") or row.get("locationsText")
-        country = _country_code(detail)
+        if row.get("_skipped_enrichment"):
+            # This posting's detail was deliberately not re-read, so this run
+            # learned nothing new about its location or country. Emit None for
+            # both, which the DB layer treats as "keep what is stored".
+            #
+            # Falling back to locationsText here would be a silent DOWNGRADE:
+            # for a multi-location posting the list says "2 Locations" while
+            # the detail says "Raleigh, NC", so the stored specific location
+            # would be overwritten with a placeholder -- and the digest would
+            # then show "2 Locations" to the reader.
+            location = None
+            country = None
+        else:
+            location = detail.get("location") or row.get("locationsText")
+            country = _country_code(detail)
 
         postings.append(
             Posting(
