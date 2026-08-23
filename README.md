@@ -193,13 +193,14 @@ python -m job_ingest.main --skip-digest
 
 ```bash
 ruff check .      # lint
-pytest -v         # 51 tests, all offline — fixture JSON + pure functions, no network/DB
+pytest -v         # 97 tests, all offline — fixture JSON + pure functions, no network/DB
 ```
 
 ### Config files you edit by hand
 
 - **`companies.yml`** — target company list (`slug`, `name`, `ats`, `board_token`).
-  Seeded with 5 real, verified-working boards spanning all three ATSs.
+  17 companies (fintech/payments and healthcare payers) spanning all three ATSs, each
+  verified against its live endpoint before being added.
 - **`filters.yml`** — the keyword lists above.
 
 ## GitHub Actions (daily cron)
@@ -220,18 +221,46 @@ purely a dev convenience.
 
 ### Schedule and DST
 
-The workflow runs at `11:00 UTC` daily. GitHub Actions cron schedules are always UTC
+The workflow runs at `11:23 UTC` daily. GitHub Actions cron schedules are always UTC
 and have no concept of time zones or daylight saving — so this is a fixed point that
 drifts relative to Atlanta time across the year:
 
 | | UTC | Atlanta (America/New_York) |
 |---|---|---|
-| Winter (EST, UTC-5) | 11:00 | 6:00 AM |
-| Summer (EDT, UTC-4) | 11:00 | 7:00 AM |
+| Winter (EST, UTC-5) | 11:23 | 6:23 AM |
+| Summer (EDT, UTC-4) | 11:23 | 7:23 AM |
 
 That one-hour, twice-a-year drift is an accepted tradeoff rather than something the
 workflow corrects — the digest still lands before the workday either way, which is all
 that actually matters here.
+
+### Schedule reliability
+
+**Scheduled runs are best-effort, not guaranteed — expect some days to be skipped
+entirely.** GitHub queues `schedule` events on shared infrastructure and drops them
+under load; on free runners this is a documented, normal outcome, not a bug in this
+pipeline. Late runs (tens of minutes) and occasional missing days are both expected.
+
+The `:23` in the cron expression is a mitigation, not a fix. Top-of-the-hour slots
+(`0 * * * *`) are by far the most contended, since that's what most people write —
+this workflow originally ran at `11:00 UTC`, fired 20 minutes late one day, and was
+skipped outright the next. An off-peak minute competes with fewer queued jobs. It
+lowers the odds of a skip; it doesn't eliminate them.
+
+Two things make a skipped day cheap here, by design:
+
+- **Nothing is lost.** New/changed postings are detected by diffing against the
+  database, not by "what appeared in the last 24 hours" — so a run that happens after
+  a two-day gap reports everything from both days. Likewise the digest sends on
+  `notified_at IS NULL`, not a time window, so a posting missed by a skipped run is
+  still pending for the next one.
+- **Skips are visible after the fact.** Every execution writes a row to `runs`, so a
+  missing day is a missing row — distinguishable from a run that happened and found
+  nothing (`status = 'success'` with `jobs_new = 0`) or one that failed
+  (`status = 'failure'`, `error` set).
+
+If a day genuinely matters, trigger it by hand: **Actions → Daily job ingest → Run
+workflow**.
 
 ### Repo secrets
 
@@ -244,7 +273,7 @@ Under **Settings → Secrets and variables → Actions**:
 - `DIGEST_TO_EMAIL`
 
 `.github/workflows/tests.yml` runs lint (`ruff`) and the full offline test suite on
-every push and pull request — no secrets needed, since all 51 tests run against
+every push and pull request — no secrets needed, since all 97 tests run against
 fixtures and pure functions rather than the network or a live database.
 
 ## What's next

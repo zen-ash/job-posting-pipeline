@@ -2,11 +2,18 @@ name: Daily job ingest
 
 "on":
   schedule:
-    # 11:00 UTC. Actions cron is always UTC and does not observe DST, so this
-    # lands at 6:00 AM EST in winter and 7:00 AM EDT in summer (Atlanta) --
+    # 11:23 UTC. Actions cron is always UTC and does not observe DST, so this
+    # lands at 6:23 AM EST in winter and 7:23 AM EDT in summer (Atlanta) --
     # a one-hour drift twice a year. See README "Why GitHub Actions" for why
     # that's an accepted tradeoff rather than something this workflow corrects.
-    - cron: "0 11 * * *"
+    #
+    # The odd :23 is deliberate. Scheduled workflows on free runners are
+    # queued, not guaranteed, and top-of-the-hour slots are the most
+    # contended -- at "0 11 * * *" this run fired 20 minutes late one day and
+    # was skipped entirely the next. An off-peak minute competes with far
+    # fewer jobs. It reduces contention; it does not eliminate skips (see
+    # README "Schedule reliability").
+    - cron: "23 11 * * *"
   # Lets a run be triggered by hand from the Actions tab, instead of waiting
   # for the next scheduled run to test a change.
   workflow_dispatch: {}
