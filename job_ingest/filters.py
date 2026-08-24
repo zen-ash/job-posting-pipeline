@@ -63,10 +63,27 @@ def _find_match(text: str, keywords: tuple[str, ...]) -> str | None:
     is -also- non-word — so a plain \\b silently never matches there. (?!\\w)
     has no such requirement: it only asserts the next character isn't a word
     character, true at end-of-string or before more punctuation.
+
+    The trailing `s?` makes every keyword also match its regular plural, so
+    "senior" catches "Seniors" and "lead" catches "Leads" -- both real
+    postings that slipped through -- while an "analyst" include still catches
+    "Analysts". Done in the matcher rather than by listing plural forms in
+    filters.yml because it covers all four keyword lists at once, needs no
+    upkeep when a keyword is added, and cannot drift out of sync the way a
+    hand-maintained parallel list would.
+
+    It does not weaken the boundary guarantees above: "sql" still fails
+    against "MySQL" on the lookbehind, and "lead" still fails against
+    "Leadership" because the following "e" fails the trailing lookahead.
+
+    Known limitation, deliberate: this handles singular keyword -> plural
+    text, not the reverse (a "sanctions" keyword will not match "sanction"),
+    and not irregular plurals. Neither has shown up in real data, and the
+    one-character fix is worth more here than a stemmer.
     """
     normalized = _normalize(text)
     for kw in keywords:
-        pattern = rf"(?<!\w){re.escape(_normalize(kw))}(?!\w)"
+        pattern = rf"(?<!\w){re.escape(_normalize(kw))}s?(?!\w)"
         if re.search(pattern, normalized):
             return kw
     return None

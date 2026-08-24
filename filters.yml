@@ -157,7 +157,30 @@ title_exclude_keywords:
   - desktop
   - technical support
   - it support
+  - system support # "System Support Analyst I" slipped past "it support"
+  - architect # e.g. "AI GRC Architect"
   - investment banking
+
+  # bank seniority prefixes. AVP (Assistant Vice President) is a real
+  # mid-level rank, not entry-level, and SVP/EVP are well above it.
+  # Deliberately NOT "officer": that would kill "Quantitative Model
+  # Development Officer II - Anti-Money Laundering" (Truist), which is
+  # squarely a target role -- "Officer" is a rank marker at banks, not a
+  # seniority signal on its own.
+  - svp
+  - evp
+  - avp
+  - chief
+
+  # client-facing wealth roles. A different job family that happens to wear
+  # the word "Analyst" -- mostly Morgan Stanley private-wealth client service.
+  - private wealth
+  - wealth management
+  - client relationship
+
+  # Morgan Stanley uses "Associate" as a post-MBA rank (3-5 years), not an
+  # entry-level title, and spells it out in the title itself.
+  - job level - associate
 
 # Location must contain at least one of location_include_keywords OR
 # location_include_state_codes (below). ATS location fields are messy
