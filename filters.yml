@@ -68,6 +68,14 @@ title_include_keywords:
   # early-career signals
   - intern
   - internship
+  # co-op spellings. "Co-Op, Internal Audit" contains no "intern" and would
+  # otherwise never match. Hyphen and space forms both needed: the matcher
+  # normalises case and periods but not hyphens, and "coop" does NOT match
+  # inside "cooperative" (the trailing lookahead rejects the "e"), so the
+  # spelled-out form needs its own entry.
+  - co-op
+  - coop
+  - cooperative education
   # "associate" (bare) removed -- it's a generic entry-level title suffix used
   # across every department (sales, BD, private equity, collections), not a
   # domain signal. Confirmed against real data: it accounted for 70/153
@@ -101,6 +109,11 @@ title_exclude_keywords:
   - vp
   - vice president
   - head of
+  # "leader" is a separate word, not a plural of "lead" -- the matcher's
+  # optional trailing "s" already covers Leads/Seniors, and it deliberately
+  # does NOT do \w* suffix matching, which would wrongly swallow
+  # "Leadership" and "Leading".
+  - leader
   - sales associate
   - associate director
   - associate general counsel
@@ -138,6 +151,9 @@ title_exclude_keywords:
   - android
   - ios
   - security engineer
+  - sre # e.g. "... Site Reliability Engineer (SRE)"
+  - site reliability
+  - software test
 
   # seniority-tier suffixes. "ii" is deliberately NOT here -- "Analyst II" is
   # entry-level-adjacent at the employers this is targeting. iii/iv read as
@@ -158,6 +174,18 @@ title_exclude_keywords:
   - technical support
   - it support
   - system support # "System Support Analyst I" slipped past "it support"
+  # PLURAL on purpose, and it is the plural that makes this precise. FIS uses
+  # "<Role> Specialists" as a grade marker ("Service Delivery Analyst
+  # Specialists", "Software Test Analyst Specialists"), while legitimate bank
+  # compliance titles use the SINGULAR ("AML Analyst Specialist - Regulatory
+  # Compliance&MLRO" at Global Payments). Because the matcher appends an
+  # optional "s" rather than stripping one, a plural keyword matches only
+  # plural text -- so this hits all three FIS titles and none of the singular
+  # ones. Verified against all 372 stored specialist rows. A singular
+  # "analyst specialist" entry was rejected: it also killed the Global
+  # Payments AML title. Standalone "AML Specialist"/"Sanctions Specialist"
+  # are untouched either way.
+  - analyst specialists
   - architect # e.g. "AI GRC Architect"
   - investment banking
 
@@ -326,3 +354,33 @@ location_include_state_codes:
   - WI
   - WY
   - DC
+
+# Digest priority tiering. A matched posting whose TITLE hits any keyword here
+# goes into Tier 1 and is listed first in the email; everything else is
+# Tier 2. Tier 1 is never truncated by the 50-posting cap -- see
+# job_ingest/digest.py -- because missing an internship deadline costs more
+# than a long email.
+#
+# MAINTENANCE: the year entries below go stale. As written they target a
+# Dec 2027 graduation (spring/summer/fall 2027 internships, May or Aug 2027
+# full-time starts). Once 2027 postings stop appearing, bump these or campus
+# roles quietly stop being prioritised -- the filter will not complain, they
+# will just drift into Tier 2.
+#
+# The non-year entries ("analyst program", rotational, campus, and the
+# intern/co-op spellings) exist precisely so that a posting whose title
+# carries no year still reaches Tier 1 on its own merits. They are the
+# durable half of this list; the years are the perishable half.
+priority_keywords:
+  - intern
+  - internship
+  - co-op
+  - coop
+  - campus
+  - analyst program
+  - rotational
+  - leadership development program
+  - new grad
+  - university program
+  - "2027"
+  - "2028"

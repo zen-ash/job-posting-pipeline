@@ -564,3 +564,79 @@ def test_absent_country_code_falls_back_to_string_matching():
     assert matches_location("Romeoville, IL", REAL_FILTERS, country_code=None) is True
     assert matches_location("Romeoville, IL", REAL_FILTERS, country_code="") is True
     assert matches_location("Remote, Germany", REAL_FILTERS, country_code=None) is False
+
+
+# --- "leader" is a word, not a plural of "lead" -----------------------------
+
+
+def test_leader_is_excluded_against_real_filters_yml():
+    assert title_exclude_hit("Compliance Leader", REAL_FILTERS) == "leader"
+    # the matcher's optional trailing "s" covers the plural for free
+    assert title_exclude_hit("Compliance Leaders", REAL_FILTERS) == "leader"
+
+
+def test_leadership_and_leading_are_still_not_excluded():
+    # The regression this guards: \w* suffix matching on excludes would make
+    # "lead" swallow "Leadership" and "Leading". The matcher appends an
+    # optional "s" only, so both remain safe -- and "leader" being its own
+    # entry does not change that, since "leadership" fails the trailing
+    # lookahead after the optional "s".
+    assert title_exclude_hit("Leadership Development Analyst", REAL_FILTERS) is None
+    assert title_exclude_hit("Leading Analytics Programs", REAL_FILTERS) is None
+    assert matches_title("Leadership Development Analyst", REAL_FILTERS) is True
+
+
+def test_lead_and_leads_are_both_still_excluded():
+    assert title_exclude_hit("Team Lead, Analytics", REAL_FILTERS) == "lead"
+    assert title_exclude_hit("Cyber Security Analyst Leads", REAL_FILTERS) == "lead"
+
+
+# --- plural-only "analyst specialists" --------------------------------------
+#
+# The matcher APPENDS an optional "s" rather than stripping one, so a plural
+# keyword matches only plural text. That asymmetry is what lets this entry
+# separate FIS's grade marker from legitimate singular compliance titles.
+
+
+def test_fis_plural_analyst_specialists_are_excluded():
+    # All three of FIS's real titles are excluded, but not all by the same
+    # keyword: two of them also carry "software test" / "site reliability",
+    # which sit earlier in the list, and title_exclude_hit returns the FIRST
+    # match. Assert exclusion here, and pin the specific keyword below on the
+    # title only it catches.
+    for title in [
+        "Service Delivery Analyst Specialists",
+        "Software Test Analyst Specialists - Cloud Banking Technologies",
+        "Managed Service Change Analyst Specialists: Site Reliability Engineer (SRE)",
+    ]:
+        assert matches_title(title, REAL_FILTERS) is False, title
+
+    assert (
+        title_exclude_hit("Service Delivery Analyst Specialists", REAL_FILTERS)
+        == "analyst specialists"
+    )
+
+
+def test_singular_analyst_specialist_is_not_excluded():
+    # "AML Analyst Specialist - Regulatory Compliance&MLRO" (Global Payments)
+    # is a real target role; a singular entry would have killed it.
+    assert title_exclude_hit(
+        "AML Analyst Specialist - Regulatory Compliance&MLRO", REAL_FILTERS
+    ) is None
+
+
+def test_standalone_specialist_titles_are_untouched():
+    for title in ["AML Specialist", "Sanctions Specialist",
+                  "Regulatory Reporting Specialist", "Model Risk Control Specialist"]:
+        assert title_exclude_hit(title, REAL_FILTERS) is None, title
+
+
+def test_plural_keyword_does_not_match_singular_text():
+    # The asymmetry stated directly, independent of filters.yml.
+    filters = Filters(
+        title_include_keywords=(),
+        title_exclude_keywords=("analyst specialists",),
+        location_include_keywords=(),
+    )
+    assert title_exclude_hit("Service Delivery Analyst Specialists", filters) is not None
+    assert title_exclude_hit("AML Analyst Specialist", filters) is None

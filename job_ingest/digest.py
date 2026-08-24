@@ -22,9 +22,12 @@ At-least-once beats at-most-once here, so send-then-mark it is.
 Selection pipeline, in order:
   1. fetch every posting pending notification (no cap yet)
   2. filter by job_ingest.filters (title include/exclude keywords, location)
-  3. round-robin across companies, so one prolific board can't crowd the
-     others out of a capped digest
-  4. cap at MAX_POSTINGS_PER_DIGEST, report the overflow
+  3. split into priority tiers (filters.yml: priority_keywords)
+  4. round-robin across companies WITHIN each tier, so one prolific board
+     can't crowd the others out of the part of the digest that gets read
+  5. fill the MAX_POSTINGS_PER_DIGEST cap from tier 1 first. Tier 1 is never
+     truncated -- if it alone exceeds the cap, the cap is exceeded and the
+     email says so.
 """
 
 from __future__ import annotations
@@ -67,7 +70,15 @@ class PendingPosting:
 @dataclass
 class DigestResult:
     pending_total: int
+    # How many postings matched at least one title_include_keyword. Sits
+    # between pending_total and matched_total in the funnel, so the report can
+    # separate "never looked relevant" from "looked relevant but was rejected".
+    include_matched_total: int
     matched_total: int
+    # Tier 1 is never truncated, so tier1_total is both "how many priority
+    # postings matched" and "how many were sent".
+    tier1_total: int
+    tier2_total: int
     included: int
     sent: bool
     error: str | None = None
@@ -116,8 +127,8 @@ def fetch_pending_postings(
 
 def apply_filters(
     postings: list[PendingPosting], filters: Filters
-) -> tuple[list[PendingPosting], list[tuple[str, int]], list[tuple[str, int]]]:
-    """Returns (matched, location_excluded, title_excluded).
+) -> tuple[list[PendingPosting], list[tuple[str, int]], list[tuple[str, int]], int]:
+    """Returns (matched, location_excluded, title_excluded, include_matched).
 
     location_excluded covers postings that matched a title include keyword
     and passed the title exclude check, but failed on location — those are
@@ -133,12 +144,14 @@ def apply_filters(
     any of the include keywords at all".
     """
     matched = []
+    include_matched = 0
     location_excluded_counts: Counter[str] = Counter()
     title_excluded_counts: Counter[str] = Counter()
 
     for p in postings:
         if not filters_module.title_include_match(p.title, filters):
             continue
+        include_matched += 1
 
         exclude_hit = filters_module.title_exclude_hit(p.title, filters)
         if exclude_hit is not None:
@@ -154,7 +167,7 @@ def apply_filters(
         location_excluded_counts.items(), key=lambda kv: kv[1], reverse=True
     )
     title_excluded = sorted(title_excluded_counts.items(), key=lambda kv: kv[1], reverse=True)
-    return matched, location_excluded, title_excluded
+    return matched, location_excluded, title_excluded, include_matched
 
 
 def _round_robin_by_company(postings: list[PendingPosting]) -> list[PendingPosting]:
@@ -210,45 +223,122 @@ def build_subject(matched_total: int) -> str:
     return f"Job digest {today}: {matched_total} new {noun}"
 
 
-def build_text_body(postings: list[PendingPosting], overflow: int) -> str:
-    lines = []
-    for company_name, jobs in _group_by_company(postings).items():
-        lines.append(company_name)
-        for j in jobs:
-            lines.append(f"  - {j.title} ({j.location or 'n/a'})")
-            lines.append(f"    {j.url}")
-        lines.append("")
-    if overflow > 0:
-        lines.append(
-            f"...and {overflow} more new posting{'s' if overflow != 1 else ''} not shown "
-            f"here (digest capped at {MAX_POSTINGS_PER_DIGEST}) — they'll appear in an "
-            f"upcoming digest."
-        )
+TIER1_HEADING = "TIER 1 - PRIORITY (internships, co-ops, campus & rotational programs)"
+TIER2_HEADING = "TIER 2 - OTHER MATCHES"
+
+
+@dataclass
+class TieredSelection:
+    """What the digest will actually send, split by priority tier.
+
+    tier1 is never truncated: if priority postings alone exceed the cap, all
+    of them go out and `tier1_over_cap` records by how much. Missing an
+    internship deadline costs more than a long email, and unlike a full-time
+    posting an internship req does not come back next quarter.
+    """
+
+    tier1: list[PendingPosting]
+    tier2: list[PendingPosting]
+    tier2_omitted: int
+    tier1_over_cap: int
+
+    @property
+    def all_postings(self) -> list[PendingPosting]:
+        return self.tier1 + self.tier2
+
+
+def select_tiered(
+    matched: list[PendingPosting], filters: Filters, cap: int = MAX_POSTINGS_PER_DIGEST
+) -> TieredSelection:
+    """Split matched postings into tiers, round-robin WITHIN each tier, then
+    fill the cap from tier 1 first.
+
+    Round-robin runs per tier rather than once overall on purpose: doing it
+    once and then splitting would let a single company's tier-1 postings sit
+    consecutively, and the fairness guarantee is wanted inside the tier that
+    actually gets read first.
+    """
+    tier1 = _round_robin_by_company(
+        [p for p in matched if filters_module.is_priority(p.title, filters)]
+    )
+    tier2 = _round_robin_by_company(
+        [p for p in matched if not filters_module.is_priority(p.title, filters)]
+    )
+    remaining = max(0, cap - len(tier1))
+    selected2 = tier2[:remaining]
+    return TieredSelection(
+        tier1=tier1,
+        tier2=selected2,
+        tier2_omitted=len(tier2) - len(selected2),
+        tier1_over_cap=max(0, len(tier1) - cap),
+    )
+
+
+def _overflow_sentence(sel: TieredSelection) -> str:
+    """One line reconciling what was left out, broken down by tier.
+
+    Tier 1 is always 0 here by construction; it is still stated rather than
+    omitted so the reader can tell "no priority postings were held back" from
+    "the breakdown forgot about them".
+    """
+    n = sel.tier2_omitted
+    return (
+        f"...and {n} more new posting{'s' if n != 1 else ''} not shown here "
+        f"(0 from Tier 1 - priority postings are never held back; "
+        f"{n} from Tier 2, over the {MAX_POSTINGS_PER_DIGEST} cap). "
+        f"They'll appear in an upcoming digest."
+    )
+
+
+def _tier1_warning_sentence(sel: TieredSelection) -> str:
+    n = sel.tier1_over_cap
+    return (
+        f"NOTE: {len(sel.tier1)} priority postings exceed the "
+        f"{MAX_POSTINGS_PER_DIGEST}-posting cap by {n}. Sending all of them "
+        f"anyway rather than truncating Tier 1."
+    )
+
+
+def build_text_body(sel: TieredSelection) -> str:
+    lines: list[str] = []
+    for heading, group in ((TIER1_HEADING, sel.tier1), (TIER2_HEADING, sel.tier2)):
+        if not group:
+            continue
+        lines.append(heading)
+        lines.append("=" * len(heading))
+        for company_name, jobs in _group_by_company(group).items():
+            lines.append(company_name)
+            for j in jobs:
+                lines.append(f"  - {j.title} ({j.location or 'n/a'})")
+                lines.append(f"    {j.url}")
+            lines.append("")
+    if sel.tier1_over_cap > 0:
+        lines.append(_tier1_warning_sentence(sel))
+    if sel.tier2_omitted > 0:
+        lines.append(_overflow_sentence(sel))
     return "\n".join(lines).strip() + "\n"
 
 
-def build_html_body(postings: list[PendingPosting], overflow: int) -> str:
-    sections = []
-    for company_name, jobs in _group_by_company(postings).items():
-        items = "\n".join(
-            f'<li><a href="{escape(j.url)}">{escape(j.title)}</a> '
-            f"&mdash; {escape(j.location or 'n/a')}</li>"
-            for j in jobs
-        )
-        sections.append(f"<h2>{escape(company_name)}</h2>\n<ul>\n{items}\n</ul>")
-
-    overflow_html = ""
-    if overflow > 0:
-        overflow_html = (
-            f"<p><em>...and {overflow} more new posting{'s' if overflow != 1 else ''} not "
-            f"shown here (digest capped at {MAX_POSTINGS_PER_DIGEST}) — they'll appear in "
-            f"an upcoming digest.</em></p>"
-        )
-
+def build_html_body(sel: TieredSelection) -> str:
+    parts: list[str] = []
+    for heading, group in ((TIER1_HEADING, sel.tier1), (TIER2_HEADING, sel.tier2)):
+        if not group:
+            continue
+        parts.append(f"<h1>{escape(heading)}</h1>")
+        for company_name, jobs in _group_by_company(group).items():
+            items = "\n".join(
+                f'<li><a href="{escape(j.url)}">{escape(j.title)}</a> '
+                f"&mdash; {escape(j.location or 'n/a')}</li>"
+                for j in jobs
+            )
+            parts.append(f"<h2>{escape(company_name)}</h2>\n<ul>\n{items}\n</ul>")
+    if sel.tier1_over_cap > 0:
+        parts.append(f"<p><strong>{escape(_tier1_warning_sentence(sel))}</strong></p>")
+    if sel.tier2_omitted > 0:
+        parts.append(f"<p><em>{escape(_overflow_sentence(sel))}</em></p>")
     return (
-        "<html><body style=\"font-family: sans-serif; max-width: 640px;\">\n"
-        + "\n".join(sections)
-        + overflow_html
+        '<html><body style="font-family: sans-serif; max-width: 640px;">\n'
+        + "\n".join(parts)
         + "\n</body></html>"
     )
 
@@ -256,9 +346,9 @@ def build_html_body(postings: list[PendingPosting], overflow: int) -> str:
 @dataclass
 class _Selection:
     pending_total: int
+    include_matched_total: int
     matched_total: int
-    postings: list[PendingPosting]  # already round-robined + capped
-    overflow: int
+    tiered: TieredSelection
     location_excluded: list[tuple[str, int]]
     title_excluded: list[tuple[str, int]]
 
@@ -269,21 +359,33 @@ def _select_for_digest(conn: psycopg.Connection, filters_path: str) -> _Selectio
     """
     pending_total = count_pending_postings(conn)
     if pending_total == 0:
-        return _Selection(0, 0, [], 0, [], [])
+        return _Selection(0, 0, 0, TieredSelection([], [], 0, 0), [], [])
 
     all_pending = fetch_pending_postings(conn)
     filters = filters_module.load_filters(filters_path)
-    matched, location_excluded, title_excluded = apply_filters(all_pending, filters)
+    matched, location_excluded, title_excluded, include_matched = apply_filters(
+        all_pending, filters
+    )
     matched_total = len(matched)
 
     if matched_total == 0:
-        return _Selection(pending_total, 0, [], 0, location_excluded, title_excluded)
+        return _Selection(
+            pending_total,
+            include_matched,
+            0,
+            TieredSelection([], [], 0, 0),
+            location_excluded,
+            title_excluded,
+        )
 
-    ordered = _round_robin_by_company(matched)
-    postings = ordered[:MAX_POSTINGS_PER_DIGEST]
-    overflow = max(0, matched_total - len(postings))
+    tiered = select_tiered(matched, filters)
     return _Selection(
-        pending_total, matched_total, postings, overflow, location_excluded, title_excluded
+        pending_total,
+        include_matched,
+        matched_total,
+        tiered,
+        location_excluded,
+        title_excluded,
     )
 
 
@@ -298,8 +400,11 @@ def preview_digest(
     selection = _select_for_digest(conn, filters_path)
     return DigestResult(
         pending_total=selection.pending_total,
+        include_matched_total=selection.include_matched_total,
         matched_total=selection.matched_total,
-        included=len(selection.postings),
+        tier1_total=len(selection.tiered.tier1),
+        tier2_total=len(selection.tiered.tier2),
+        included=len(selection.tiered.all_postings),
         sent=False,
         location_excluded=selection.location_excluded,
         title_excluded=selection.title_excluded,
@@ -311,19 +416,31 @@ def send_digest(
 ) -> DigestResult:
     selection = _select_for_digest(conn, filters_path)
     pending_total = selection.pending_total
+    include_matched_total = selection.include_matched_total
     matched_total = selection.matched_total
-    postings = selection.postings
-    overflow = selection.overflow
+    tiered = selection.tiered
+    postings = tiered.all_postings
     location_excluded = selection.location_excluded
     title_excluded = selection.title_excluded
 
     if pending_total == 0:
-        return DigestResult(pending_total=0, matched_total=0, included=0, sent=False)
+        return DigestResult(
+            pending_total=0,
+            include_matched_total=0,
+            matched_total=0,
+            tier1_total=0,
+            tier2_total=0,
+            included=0,
+            sent=False,
+        )
 
     if matched_total == 0:
         return DigestResult(
             pending_total=pending_total,
+            include_matched_total=include_matched_total,
             matched_total=0,
+            tier1_total=0,
+            tier2_total=0,
             included=0,
             sent=False,
             location_excluded=location_excluded,
@@ -336,7 +453,10 @@ def send_digest(
     if not resend.api_key or not from_email or not to_email:
         return DigestResult(
             pending_total=pending_total,
+            include_matched_total=include_matched_total,
             matched_total=matched_total,
+            tier1_total=len(tiered.tier1),
+            tier2_total=len(tiered.tier2),
             included=len(postings),
             sent=False,
             error="RESEND_API_KEY / DIGEST_FROM_EMAIL / DIGEST_TO_EMAIL not fully set",
@@ -348,8 +468,8 @@ def send_digest(
         "from": from_email,
         "to": [to_email],
         "subject": build_subject(matched_total),
-        "html": build_html_body(postings, overflow),
-        "text": build_text_body(postings, overflow),
+        "html": build_html_body(tiered),
+        "text": build_text_body(tiered),
     }
 
     try:
@@ -360,7 +480,10 @@ def send_digest(
         # we chose at-least-once, and this is that choice paying off.
         return DigestResult(
             pending_total=pending_total,
+            include_matched_total=include_matched_total,
             matched_total=matched_total,
+            tier1_total=len(tiered.tier1),
+            tier2_total=len(tiered.tier2),
             included=len(postings),
             sent=False,
             error=str(exc),
@@ -373,7 +496,10 @@ def send_digest(
     mark_notified(conn, postings, notified_at=datetime.now(UTC))
     return DigestResult(
         pending_total=pending_total,
+        include_matched_total=include_matched_total,
         matched_total=matched_total,
+        tier1_total=len(tiered.tier1),
+        tier2_total=len(tiered.tier2),
         included=len(postings),
         sent=True,
         location_excluded=location_excluded,

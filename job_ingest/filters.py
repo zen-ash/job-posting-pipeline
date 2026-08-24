@@ -25,6 +25,10 @@ class Filters:
     # US state 2-letter codes, matched separately and more strictly than the
     # phrases above — see _contains_state_code.
     location_include_state_codes: tuple[str, ...] = ()
+    # Titles hitting any of these are ranked into Tier 1 by the digest. This
+    # is a RANKING signal, not a filter: a posting is never included or
+    # excluded because of it — see is_priority.
+    priority_keywords: tuple[str, ...] = ()
 
 
 def load_filters(path: str | Path = DEFAULT_FILTERS_PATH) -> Filters:
@@ -35,6 +39,7 @@ def load_filters(path: str | Path = DEFAULT_FILTERS_PATH) -> Filters:
         title_exclude_keywords=tuple(raw.get("title_exclude_keywords") or []),
         location_include_keywords=tuple(raw.get("location_include_keywords") or []),
         location_include_state_codes=tuple(raw.get("location_include_state_codes") or []),
+        priority_keywords=tuple(str(k) for k in (raw.get("priority_keywords") or [])),
     )
 
 
@@ -163,6 +168,22 @@ def matches_location(
     if _contains_any(location, filters.location_include_keywords):
         return True
     return _contains_state_code(location, filters.location_include_state_codes)
+
+
+def is_priority(title: str, filters: Filters) -> bool:
+    """True if `title` hits any priority keyword — the Tier 1 test.
+
+    Kept here beside the other matching rules, and driven entirely by
+    filters.yml's `priority_keywords`, so tiering is tuned the same way every
+    other rule is: by editing config, not code.
+
+    This ranks; it never filters. A posting that fails this is still sent, just
+    lower down — so an over-narrow priority list costs ordering, never recall.
+    Uses the same whole-word, period-stripped, plural-tolerant matching as
+    everything else, which is why a bare "2027" entry matches "Summer 2027
+    Internship" without also matching "12027".
+    """
+    return _contains_any(title, filters.priority_keywords)
 
 
 def matches(

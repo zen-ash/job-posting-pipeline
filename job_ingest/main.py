@@ -151,18 +151,39 @@ def run_full_ingest(args: argparse.Namespace) -> int:
             digest_result = digest.send_digest(conn)
 
         label = "preview (--skip-digest)" if args.skip_digest else "digest"
-        included_phrase = "would be included" if args.skip_digest else "included in this send"
+        title_killed = sum(n for _, n in digest_result.title_excluded or [])
+        location_killed = sum(n for _, n in digest_result.location_excluded or [])
+        no_include = digest_result.pending_total - digest_result.include_matched_total
+
+        # Reported as a funnel rather than three bare totals: each line is the
+        # stage's survivor count plus what that stage removed, so the numbers
+        # reconcile top to bottom instead of having to be inferred.
+        print(f"{label} funnel:")
+        print(f"  fetched (pending)          {digest_result.pending_total:>6}")
         print(
-            f"{label}: {digest_result.pending_total} new postings, "
-            f"{digest_result.matched_total} matched filters, "
-            f"{digest_result.included} {included_phrase}"
+            f"  title-include matched      {digest_result.include_matched_total:>6}"
+            f"   (-{no_include} matched no include keyword)"
         )
+        print(
+            f"  survived title excludes    "
+            f"{digest_result.include_matched_total - title_killed:>6}   (-{title_killed})"
+        )
+        print(
+            f"  survived location filter   {digest_result.matched_total:>6}"
+            f"   (-{location_killed})"
+        )
+        print(f"    tier 1 (priority)        {digest_result.tier1_total:>6}   (never truncated)")
+        print(f"    tier 2 (other)           {digest_result.tier2_total:>6}")
+        capped = digest_result.matched_total - digest_result.included
+        suffix = f"   (-{capped} over the {digest.MAX_POSTINGS_PER_DIGEST} cap)" if capped else ""
+        print(f"  selected                   {digest_result.included:>6}{suffix}")
+
         if digest_result.title_excluded:
-            print("  excluded by title (matched an include keyword, tune filters.yml):")
+            print("\n  killed by title exclude (grouped by keyword, tune filters.yml):")
             for keyword, count in digest_result.title_excluded[:15]:
                 print(f'    {count:>3}x  "{keyword}"')
         if digest_result.location_excluded:
-            print("  excluded by location (passed title filter, tune filters.yml):")
+            print("\n  failed location (passed title filter, tune filters.yml):")
             for location, count in digest_result.location_excluded[:15]:
                 print(f"    {count:>3}x  {location}")
         if args.skip_digest:
