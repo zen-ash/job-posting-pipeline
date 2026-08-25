@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import pytest
+from datetime import UTC, datetime
 
-from job_ingest.config import ConfigError, load_companies
+import pytest
+from psycopg.types.json import Json
+
+from job_ingest.config import Company, ConfigError, load_companies
 from job_ingest.db import (
     MAX_DESCRIPTION_CHARS,
     _resolve_against_stored,
     _truncate_description,
+    record_run,
+    sync_company_postings,
 )
 from job_ingest.main import compute_run_status
 from job_ingest.models import Posting, posting_content_hash
@@ -212,3 +217,190 @@ def test_a_real_list_location_edit_still_overwrites():
         _posting(location="Austin, TX"), _row(location="Raleigh, NC")
     )
     assert loc == "Austin, TX"
+
+
+# --- closure requires a COMPLETE observation --------------------------------
+
+
+class _FakeCursor:
+    def __init__(self):
+        self.executed = []
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.executed.append(sql)
+
+    def fetchone(self):
+        return None  # every posting looks new; we only care about the close step
+
+
+class _FakeConn:
+    def __init__(self):
+        self._cur = _FakeCursor()
+
+    def cursor(self):
+        return self._cur
+
+    def commit(self):
+        pass
+
+
+def _closing_statements(cur):
+    return [s for s in cur.executed if "closed_at = now()" in s]
+
+
+def _wd_posting(external_id):
+    return Posting(
+        source="workday", company_slug="citi", external_id=external_id,
+        title="Data Analyst", location="New York, NY", department=None,
+        url="https://example.com/x", source_updated_at=None, description="",
+    )
+
+
+CITI = Company(slug="citi", name="Citi", ats="workday",
+               tenant="citi", wd_host="wd5", site="2")
+
+
+def test_complete_observation_still_closes_absent_postings():
+    conn = _FakeConn()
+    sync_company_postings(conn, CITI, [_wd_posting("/job/a")], complete=True)
+    assert len(_closing_statements(conn._cur)) == 1
+
+
+def test_truncated_observation_closes_nothing():
+    # The whole point: a posting absent from a truncated fetch is
+    # indistinguishable from one that closed, so nothing may be closed.
+    conn = _FakeConn()
+    stats = sync_company_postings(conn, CITI, [_wd_posting("/job/a")], complete=False)
+    assert _closing_statements(conn._cur) == []
+    assert stats.closed == 0
+
+
+def test_truncated_observation_still_upserts_what_it_saw():
+    # Suppressing closure must not suppress ingestion.
+    conn = _FakeConn()
+    stats = sync_company_postings(
+        conn, CITI, [_wd_posting("/job/a"), _wd_posting("/job/b")], complete=False
+    )
+    assert stats.seen == 2
+    assert stats.new == 2
+    assert any("INSERT INTO jobs" in s for s in conn._cur.executed)
+
+
+def test_complete_defaults_to_true_so_existing_callers_are_unchanged():
+    conn = _FakeConn()
+    sync_company_postings(conn, CITI, [_wd_posting("/job/a")])
+    assert len(_closing_statements(conn._cur)) == 1
+
+
+class _RecordingCursor(_FakeCursor):
+    def __init__(self):
+        super().__init__()
+        self.params = []
+
+    def execute(self, sql, params=None):
+        super().execute(sql, params)
+        self.params.append(params)
+
+    def fetchone(self):
+        return (1,)  # the RETURNING id from the runs insert
+
+
+class _RecordingConn(_FakeConn):
+    def __init__(self):
+        self._cur = _RecordingCursor()
+
+
+def test_incomplete_observations_are_recorded_on_the_run():
+    # jobs_closed under-reports on a suppressed run by design, so the run row
+    # has to say WHY -- otherwise "nothing closed" is ambiguous after the fact.
+    conn = _RecordingConn()
+    now = datetime(2026, 8, 24, tzinfo=UTC)
+    record_run(
+        conn, started_at=now, finished_at=now, status="success",
+        companies_total=1, companies_succeeded=1, companies_failed=0,
+        jobs_seen=2000, jobs_new=0, jobs_updated=0, jobs_reopened=0, jobs_closed=0,
+        error=None, board_errors=[],
+        incomplete_observations=[{"company_slug": "citi", "reason": "total=2000 at cap"}],
+    )
+    sql = conn._cur.executed[0]
+    assert "incomplete_observations" in sql
+    payload = [p for p in conn._cur.params[0] if isinstance(p, Json)]
+    dumped = [p.obj for p in payload]
+    assert [{"company_slug": "citi", "reason": "total=2000 at cap"}] in dumped
+
+
+def test_incomplete_observations_defaults_to_empty():
+    conn = _RecordingConn()
+    now = datetime(2026, 8, 24, tzinfo=UTC)
+    record_run(
+        conn, started_at=now, finished_at=now, status="success",
+        companies_total=1, companies_succeeded=1, companies_failed=0,
+        jobs_seen=1, jobs_new=0, jobs_updated=0, jobs_reopened=0, jobs_closed=0,
+        error=None, board_errors=[],
+    )
+    dumped = [p.obj for p in conn._cur.params[0] if isinstance(p, Json)]
+    assert [] in dumped
+
+
+# --- reopen path and notification state -------------------------------------
+
+
+class _ExistingRowCursor(_RecordingCursor):
+    """Cursor whose SELECT reports an existing row, optionally already closed."""
+
+    def __init__(self, closed_at):
+        super().__init__()
+        self._closed_at = closed_at
+
+    def fetchone(self):
+        # (content_hash, closed_at, title, location, department, description)
+        return ("HASH", self._closed_at, "Data Analyst", "New York, NY", None, "body")
+
+
+class _ExistingRowConn(_FakeConn):
+    def __init__(self, closed_at):
+        self._cur = _ExistingRowCursor(closed_at)
+
+
+def _update_params(conn):
+    for sql, params in zip(conn._cur.executed, conn._cur.params, strict=False):
+        if "UPDATE jobs" in sql and "notified_at = CASE" in sql:
+            return params
+    raise AssertionError("no upsert UPDATE issued")
+
+
+def test_reopening_a_closed_posting_clears_notified_at():
+    """Documents real current behaviour, deliberate but sharp-edged.
+
+    A posting that was closed and comes back has its notified_at reset, so it
+    is delivered again -- the intent being that a genuinely re-opened role is
+    newly actionable. The hazard is that it makes any FALSE closure become a
+    duplicate delivery, which is precisely what notified_at exists to prevent.
+    That is why closure now requires a complete observation (see
+    sync_company_postings): removing the false closures removes the spurious
+    reopens, rather than weakening the reopen semantics themselves.
+    """
+    conn = _ExistingRowConn(closed_at=datetime(2026, 8, 1, tzinfo=UTC))
+    sync_company_postings(conn, CITI, [_wd_posting("/job/a")], complete=True)
+    params = _update_params(conn)
+    assert True in params, "the reopened flag should be set, clearing notified_at"
+
+
+def test_an_already_open_posting_does_not_touch_notified_at():
+    conn = _ExistingRowConn(closed_at=None)
+    sync_company_postings(conn, CITI, [_wd_posting("/job/a")], complete=True)
+    params = _update_params(conn)
+    assert True not in params, "an unclosed posting must not reset notification state"
+
+
+def test_reopen_is_counted_in_stats():
+    conn = _ExistingRowConn(closed_at=datetime(2026, 8, 1, tzinfo=UTC))
+    stats = sync_company_postings(conn, CITI, [_wd_posting("/job/a")], complete=True)
+    assert stats.reopened == 1

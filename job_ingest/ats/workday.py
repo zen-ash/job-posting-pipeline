@@ -45,6 +45,15 @@ from job_ingest.models import Posting
 # postings, 20 -> 20, 21 -> 0, 25 -> 0.
 PAGE_SIZE = 20
 
+# Workday refuses to report or serve more than this many postings for a single
+# query: a board with more simply reports `total` AS this number. Verified on
+# Citi, whose single-select facets (workerSubType, timeType) sum to ~4,300-4,500
+# while `total` says exactly 2000, and whose searchText partitions all pin at
+# 2000 from above. A board reporting total >= this has been TRUNCATED, and a
+# posting missing from a truncated fetch cannot be distinguished from a posting
+# that closed -- so closure detection must be suppressed for that run.
+TOTAL_CAP = 2000
+
 # Safety valve so a misconfigured tenant can't spin forever. See the wrap-around
 # note in fetch(); 500 pages * 20 = 10,000 postings, far above any real board here.
 DEFAULT_MAX_PAGES = 500
@@ -67,6 +76,22 @@ DETAIL_URL = "https://{tenant}.{wd_host}.myworkdayjobs.com/wday/cxs/{tenant}/{si
 # verified byte-identical to the `externalUrl` the detail endpoint returns, so
 # it can be built from list data alone without paying for a detail request.
 APPLY_URL = "https://{tenant}.{wd_host}.myworkdayjobs.com/{site}{path}"
+
+
+# The completeness verdict rides along on the raw rows so that fetch() can keep
+# returning a plain list and normalize() stays a pure function of its input.
+_INCOMPLETE_KEY = "__incomplete_reason__"
+
+
+def _set_incomplete_reason(rows: list[dict[str, Any]], reason: str | None) -> None:
+    if reason is not None and rows:
+        rows[0][_INCOMPLETE_KEY] = reason
+
+
+def incomplete_reason(raw: list[dict[str, Any]]) -> str | None:
+    """Why this fetch was a partial observation of the board, or None if it
+    saw everything. See TOTAL_CAP."""
+    return raw[0].get(_INCOMPLETE_KEY) if raw else None
 
 
 def _require_workday_fields(company: Company) -> None:
@@ -108,6 +133,7 @@ def fetch(
     rows: list[dict[str, Any]] = []
     total: int | None = None
     offset = 0
+    exhausted = False
 
     for _ in range(max_pages):
         response = session.post(
@@ -126,6 +152,7 @@ def fetch(
 
         page = payload.get("jobPostings") or []
         if not page:
+            exhausted = True
             break
         rows.extend(page)
 
@@ -137,7 +164,24 @@ def fetch(
         # empty" never becomes true and would loop until max_pages, silently
         # re-ingesting the first page over and over.
         if total <= 0 or offset >= total:
+            exhausted = True
             break
+
+    # Two ways this observation can be partial, both meaning "absent does not
+    # imply closed": the board hit Workday's hard ceiling, or our own page
+    # budget ran out before we reached `total`.
+    if total is not None and total >= TOTAL_CAP:
+        incomplete_reason = (
+            f"source reported total={total} at or above Workday's {TOTAL_CAP} cap; "
+            f"the result set is truncated"
+        )
+    elif not exhausted:
+        incomplete_reason = (
+            f"stopped after max_pages={max_pages} with offset={offset} of total={total}"
+        )
+    else:
+        incomplete_reason = None
+    _set_incomplete_reason(rows, incomplete_reason)
 
     if filters is not None:
         _enrich(

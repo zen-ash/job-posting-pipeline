@@ -337,3 +337,37 @@ def test_skipping_uses_the_same_id_scheme_as_normalize(monkeypatch):
     workday.fetch(HOMEDEPOT, session=session2, filters=FILTERS,
                   already_enriched={external_id})
     assert session2.detail_urls == []
+
+
+# --- completeness / truncation detection ------------------------------------
+
+
+def test_board_under_the_cap_is_a_complete_observation():
+    session = FakeWorkdaySession(total=45)
+    rows = workday.fetch(HOMEDEPOT, session=session, filters=None)
+    assert workday.incomplete_reason(rows) is None
+
+
+def test_board_at_the_cap_is_flagged_incomplete():
+    # Workday reports total == TOTAL_CAP for any board larger than the cap, so
+    # the result set is a sliding window and absence proves nothing.
+    session = FakeWorkdaySession(total=workday.TOTAL_CAP)
+    rows = workday.fetch(HOMEDEPOT, session=session, filters=None)
+    reason = workday.incomplete_reason(rows)
+    assert reason is not None
+    assert str(workday.TOTAL_CAP) in reason
+
+
+def test_hitting_the_page_budget_is_also_flagged_incomplete():
+    # The other way an observation goes partial: our own max_pages ran out.
+    session = FakeWorkdaySession(total=500)
+    rows = workday.fetch(HOMEDEPOT, session=session, filters=None, max_pages=3)
+    assert "max_pages" in (workday.incomplete_reason(rows) or "")
+
+
+def test_incomplete_flag_does_not_leak_into_normalized_postings():
+    session = FakeWorkdaySession(total=workday.TOTAL_CAP)
+    rows = workday.fetch(HOMEDEPOT, session=session, filters=None)
+    postings = workday.normalize(rows, HOMEDEPOT)
+    assert len(postings) == len(rows)
+    assert all(p.external_id.startswith("/job/") for p in postings)

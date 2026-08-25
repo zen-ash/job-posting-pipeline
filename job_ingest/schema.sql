@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS runs (
     -- [{"company_slug": ..., "ats": ..., "error": "..."}] for boards that failed
     -- this run without failing the run as a whole.
     board_errors          JSONB NOT NULL DEFAULT '[]'::jsonb,
+    -- [{"company_slug": ..., "reason": "..."}] for boards whose fetch SUCCEEDED
+    -- but returned only a partial view (e.g. Workday caps `total` at 2000, so a
+    -- larger board hands back a sliding window). Closure detection is suppressed
+    -- for these, so jobs_closed under-reports on purpose -- this column is how
+    -- that is distinguishable from "genuinely nothing closed" after the fact.
+    incomplete_observations JSONB NOT NULL DEFAULT '[]'::jsonb,
     -- Digest outcome, separate from ingestion `status` above on purpose: a run
     -- can ingest cleanly and still fail to email (or vice versa isn't possible,
     -- but conflating the two in one enum would still blur what actually broke).
@@ -106,6 +112,7 @@ CREATE TABLE IF NOT EXISTS runs (
 -- existed before the column was added). Both run every time via ensure_schema()
 -- and are no-ops once applied.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS country_code TEXT;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS incomplete_observations JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- Widening a CHECK constraint needs an explicit drop/re-add: unlike a new
 -- column, CREATE TABLE IF NOT EXISTS above will NOT update the constraint on a

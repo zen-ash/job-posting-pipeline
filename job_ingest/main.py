@@ -18,18 +18,17 @@ import requests
 from dotenv import load_dotenv
 
 from job_ingest import db, digest
-from job_ingest.ats import fetch_postings
+from job_ingest.ats import BoardFetch, fetch_postings
 from job_ingest.config import Company, load_companies
 from job_ingest.filters import Filters, load_filters
 from job_ingest.http import BETWEEN_BOARDS_DELAY_SECONDS
-from job_ingest.models import Posting
 
 
 def fetch_company(
     company: Company,
     filters: Filters | None = None,
     already_enriched: set[str] | None = None,
-) -> list[Posting]:
+) -> BoardFetch:
     """Both extra arguments are Workday-only and are cost optimisations inside
     the fetch, never a substitute for the digest's own independent filtering:
 
@@ -74,7 +73,7 @@ def run_single_company(args: argparse.Namespace) -> int:
         return 1
 
     company = companies[args.company]
-    postings = fetch_company(company, _load_filters_or_none(args.filters_file))
+    postings = fetch_company(company, _load_filters_or_none(args.filters_file)).postings
 
     board_id = company.board_token or f"{company.tenant}/{company.wd_host}/{company.site}"
     header = f"{company.name} ({company.ats}, {board_id})"
@@ -105,6 +104,7 @@ def run_full_ingest(args: argparse.Namespace) -> int:
 
         companies_succeeded = 0
         board_errors: list[dict] = []
+        incomplete_observations: list[dict] = []
         totals = {"seen": 0, "new": 0, "updated": 0, "reopened": 0, "closed": 0}
 
         for i, company in enumerate(companies):
@@ -117,7 +117,7 @@ def run_full_ingest(args: argparse.Namespace) -> int:
                     if company.ats == "workday"
                     else None
                 )
-                postings = fetch_company(company, filters, already_enriched)
+                fetched = fetch_company(company, filters, already_enriched)
             except requests.RequestException as exc:
                 message = str(exc)
                 print(f"[{company.slug}] FAILED: {message}", file=sys.stderr)
@@ -125,7 +125,18 @@ def run_full_ingest(args: argparse.Namespace) -> int:
                     {"company_slug": company.slug, "ats": company.ats, "error": message}
                 )
             else:
-                stats = db.sync_company_postings(conn, company, postings)
+                if not fetched.complete:
+                    incomplete_observations.append(
+                        {"company_slug": company.slug, "reason": fetched.incomplete_reason}
+                    )
+                    print(
+                        f"[{company.slug}] INCOMPLETE observation, closure detection "
+                        f"suppressed: {fetched.incomplete_reason}",
+                        file=sys.stderr,
+                    )
+                stats = db.sync_company_postings(
+                    conn, company, fetched.postings, complete=fetched.complete
+                )
                 conn.commit()
                 companies_succeeded += 1
                 for key in totals:
@@ -214,6 +225,7 @@ def run_full_ingest(args: argparse.Namespace) -> int:
             jobs_closed=totals["closed"],
             error=None,
             board_errors=board_errors,
+            incomplete_observations=incomplete_observations,
             digest_pending_total=digest_result.pending_total,
             digest_matched_total=digest_result.matched_total,
             digest_sent=digest_result.sent,

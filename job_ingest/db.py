@@ -178,7 +178,10 @@ class SyncStats:
 
 
 def sync_company_postings(
-    conn: psycopg.Connection, company: Company, postings: list[Posting]
+    conn: psycopg.Connection,
+    company: Company,
+    postings: list[Posting],
+    complete: bool = True,
 ) -> SyncStats:
     """Upsert `postings` (this run's full fetch for `company`) and close any
     previously-open posting for this company that's now absent.
@@ -187,6 +190,17 @@ def sync_company_postings(
     is unconditional on absence, which is only safe to trust when the fetch
     itself is trustworthy. An empty `postings` list (a real, successful fetch
     that returned zero jobs) correctly closes everything still open.
+
+    `complete=False` suppresses closure detection entirely for this call. The
+    general rule is that closing a posting requires a COMPLETE observation of
+    the board: absence only means "closed" if we would have seen it had it
+    been open. A failed fetch is one way to lose that guarantee (handled by
+    never calling this function at all), and a fetch that SUCCEEDS but is
+    truncated is another — Workday caps `total` at 2000, so a larger board
+    returns a sliding window and postings drop out of view without changing.
+    Both produce the same false closure, so both must suppress it. Postings
+    that WERE seen are still upserted normally; only the closing step is
+    skipped.
     """
     stats = SyncStats(seen=len(postings))
     fetched_ids = [p.external_id for p in postings]
@@ -288,16 +302,17 @@ def sync_company_postings(
                 ),
             )
 
-        cur.execute(
-            """
-            UPDATE jobs
-            SET closed_at = now()
-            WHERE source = %s AND company_slug = %s AND closed_at IS NULL
-              AND external_id <> ALL(%s)
-            """,
-            (company.ats, company.slug, fetched_ids),
-        )
-        stats.closed = cur.rowcount
+        if complete:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET closed_at = now()
+                WHERE source = %s AND company_slug = %s AND closed_at IS NULL
+                  AND external_id <> ALL(%s)
+                """,
+                (company.ats, company.slug, fetched_ids),
+            )
+            stats.closed = cur.rowcount
 
     return stats
 
@@ -318,6 +333,7 @@ def record_run(
     jobs_closed: int,
     error: str | None,
     board_errors: list[dict],
+    incomplete_observations: list[dict] | None = None,
     digest_pending_total: int = 0,
     digest_matched_total: int = 0,
     digest_sent: bool = False,
@@ -330,10 +346,11 @@ def record_run(
             INSERT INTO runs (
                 started_at, finished_at, status, companies_total, companies_succeeded,
                 companies_failed, jobs_seen, jobs_new, jobs_updated, jobs_reopened,
-                jobs_closed, error, board_errors, digest_pending_total, digest_matched_total,
+                jobs_closed, error, board_errors, incomplete_observations,
+                digest_pending_total, digest_matched_total,
                 digest_sent, digest_postings_sent, digest_error
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -350,6 +367,7 @@ def record_run(
                 jobs_closed,
                 error,
                 Json(board_errors),
+                Json(incomplete_observations or []),
                 digest_pending_total,
                 digest_matched_total,
                 digest_sent,
